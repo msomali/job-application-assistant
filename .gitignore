@@ -1,0 +1,36 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Output
+output/
+
+# LaTeX artifacts
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data
+data/jobs.db
+data/master_resume.json
+data/screening_answers.json
+data/search_config.json
+
+# Claude
+chat.txt
+.claude/
+
+# Misc
+competitive_analysis.md
+idea.md
+plan.md

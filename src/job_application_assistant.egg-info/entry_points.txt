@@ -1,0 +1,2 @@
+[console_scripts]
+jaa = src.main:cli

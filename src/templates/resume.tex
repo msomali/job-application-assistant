@@ -1,0 +1,59 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=0.7in]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+
+% Colors
+\definecolor{headercolor}{RGB}{40, 40, 40}
+\definecolor{accentcolor}{RGB}{0, 90, 160}
+
+% Remove page numbers
+\pagestyle{empty}
+
+% Section formatting
+\titleformat{\section}{\large\bfseries\color{accentcolor}}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{10pt}{6pt}
+
+% Custom commands
+\newcommand{\cvsection}[2]{%
+  \noindent\textbf{#1} \hfill \textit{#2}\par\vspace{2pt}%
+}
+
+% Tight lists
+\setlist[itemize]{nosep, leftmargin=1.5em, itemsep=2pt}
+
+\begin{document}
+
+% Header
+\begin{center}
+  {\LARGE\bfseries\color{headercolor} %%NAME%%}\\[4pt]
+  {\small %%CONTACT%%}
+\end{center}
+
+\vspace{4pt}
+
+% Summary
+\section*{Professional Summary}
+%%SUMMARY%%
+
+% Experience
+\section*{Experience}
+%%EXPERIENCE%%
+
+% Skills
+\section*{Skills}
+%%SKILLS%%
+
+% Education
+\section*{Education}
+%%EDUCATION%%
+
+% Projects (optional, may be empty)
+%%PROJECTS%%
+
+\end{document}

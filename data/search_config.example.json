@@ -1,0 +1,16 @@
+{
+  "search_queries": [
+    "machine learning engineer full-time 2026",
+    "AI engineer remote full-time 2026"
+  ],
+  "company_career_pages": [
+    {
+      "name": "John Doe Inc.",
+      "url": "https://jobs.jobboard.com/johndoeinc",
+      "include_paths": ["/johndoeinc/*"]
+    }
+  ],
+  "search_limit": 5,
+  "crawl_limit": 20,
+  "min_fit_score": 60
+}

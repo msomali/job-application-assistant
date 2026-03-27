@@ -1,0 +1,63 @@
+{
+  "name": "John Doe",
+  "contact": "Los Angeles, CA | john.doe@johndoe.com | +1-234-567-8900 | linkedin.com/in/johndoe | github.com/johndoe",
+  "summary": "Experienced AI Engineer with alot of experience.",
+  "experience": [
+    {
+      "title": "AI Engineer",
+      "company": "John Doe Inc.",
+      "location": "Los Angeles, CA",
+      "dates": "Dec 2025 - Present",
+      "bullets": [
+        "Develop agents for multipurpose use cases.",
+        "Deploy agents into production and monitor them."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "B.Sc. AI Engineering",
+      "institution": "University of Artifical Intelligence",
+      "year": "Aug 2020 - Dec 2024",
+      "location": "Los Angeles, CA"
+    }
+  ],
+  "skills": ["Python", "Machine Learning", "TensorFlow/Keras"],
+  "projects": [
+    {
+      "name": "AI Agent",
+      "description": "Built agent to automate tasks and provide insights. Deployed in production and monitored for performance."
+    }
+  ],
+  "certifications": ["AI Engineer (2025) - AI Institute"],
+  "professional_memberships": ["AI Engineer Society (2023 - Present)"],
+  "publications": [
+    "D. Joe et al., \"AI For Agents.\" Los Angeles, CA, USA: AI Institute, 2025. Available: https://www.ai.org/ai-for-agents"
+  ],
+  "references": [
+    {
+      "name": "Jane Doe",
+      "title": "Director",
+      "organization": "Jane Doe Inc.",
+      "email": "jane.doe@janedoe.com",
+      "relationship": "Direct supervisor"
+    }
+  ],
+  "recommendations": [
+    {
+      "from": "John Smith",
+      "role": "Software Engineer",
+      "date": "September 2025",
+      "context": "Worked with John on a AI project handover between teams",
+      "quote": "Even though AI Agents was relatively new technology for him, John was learning very quickly."
+    }
+  ],
+  "languages": ["English (Fluent)", "Spanish (Intermediate)", "French (Basic)"],
+  "preferences": {
+    "job_types": ["full-time", "contract", "internship", "part-time"],
+    "work_modes": ["remote", "hybrid", "on-site"],
+    "locations": ["United States", "California"],
+    "min_salary": 150000,
+    "target_roles": ["AI Engineer", "AI Scientist", "AI/ML Engineer"]
+  }
+}

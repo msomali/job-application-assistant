@@ -1,0 +1,96 @@
+{
+  "_description": "Pre-defined answers for common screening questions on job applications. Claude uses these for consistency when filling forms.",
+
+  "personal": {
+    "full_name": "John Doe",
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "john.doe@johndoe.com",
+    "phone": "+1-234-567-8900",
+    "city": "Los Angeles",
+    "state": "California",
+    "zip_code": "90000",
+    "country": "United States",
+    "linkedin": "https://linkedin.com/in/johndoe",
+    "github": "https://github.com/johndoe",
+    "website": "www.johndoe.com",
+    "preferred_name": "John"
+  },
+
+  "work_authorization": {
+    "authorized_to_work_in_us": true,
+    "require_sponsorship": false,
+    "visa_status": "Authorized to work in the United States",
+    "visa_type": "F-1 OPT",
+    "visa_expiration": "31-12-2025",
+    "us_citizen": false,
+    "permanent_resident": false
+  },
+
+  "experience": {
+    "total_years_experience": "1+",
+    "years_python": "3+",
+    "years_sql": "3+",
+    "years_data_engineering": "2+",
+    "years_machine_learning": "2+",
+    "years_cloud": "2",
+    "years_aws": "2",
+    "years_azure": "1+",
+    "years_gcp": "0",
+    "years_spark": "0",
+    "years_airflow": "2",
+    "years_docker": "2",
+    "years_kubernetes": "0",
+    "years_javascript": "3"
+  },
+
+  "education": {
+    "highest_degree": "Bachelor's Degree",
+    "major": "AI Engineering",
+    "concentration": "AI and Machine Learning",
+    "university": "University of Artificial Intelligence",
+    "graduation_year": "2024",
+    "gpa": "4.0/4.0"
+  },
+
+  "job_preferences": {
+    "desired_salary": "Negotiable based on total compensation and role scope",
+    "salary_range_min": "",
+    "salary_range_max": "",
+    "start_date": "Immediately / 2 weeks notice",
+    "willing_to_relocate": true,
+    "remote_preference": "Open to remote, hybrid, or on-site",
+    "travel_percentage": "Up to 25%",
+    "available_for_interview": "Anytime"
+  },
+
+  "diversity": {
+    "gender": "Male",
+    "race_ethnicity": "Black or African American",
+    "veteran_status": "Not a veteran",
+    "disability_status": "No disability",
+    "ethnicity": "Non-Hispanic",
+    "pronouns": "Prefer not to say",
+    "_note": "These are optional EEO questions. Answer only if the form requires it."
+  },
+
+  "common_questions": {
+    "why_interested": "I'm drawn to this role because it aligns with my experience.",
+    "greatest_strength": "My ability to bridge AI engineering and machine learning.",
+    "greatest_weakness": "I sometimes spend extra time optimizing systems beyond what's immediately needed..",
+    "where_see_yourself_5_years": "Leading AI engineering or ML engineering initiatives at a company.",
+    "describe_challenge": "I designed a AI pipeline with schema reconciliation.",
+    "tell_me_about_yourself": "I'm an AI Engineer with a Bachelor's in AI Engineering from the University of Artificial Intelligence. I have 2+ years of experience building production AI systems & ML pipelines, and cloud infrastructure.",
+    "leadership_example": "At John Doe Inc., I led a AI team through structured agents reviews and deploying sessions.",
+    "how_did_you_hear": "Online job board",
+    "convicted_of_felony": false,
+    "background_check_consent": true,
+    "drug_test_consent": true,
+    "non_compete": false,
+    "available_weekends": false
+  },
+
+  "_matching_rules": {
+    "description": "When Claude encounters a screening question not listed here, it should: 1) Try to answer from master_resume.json data, 2) For subjective questions, craft a professional response highlighting relevant experience, 3) For unknown factual questions (e.g., specific salary number), leave blank or select 'Prefer not to say'."
+  }
+}
