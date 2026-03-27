@@ -29,6 +29,7 @@ data/search_config.json
 # Claude
 chat.txt
 .claude/
+CLAUDE.md
 
 # Misc
 competitive_analysis.md
