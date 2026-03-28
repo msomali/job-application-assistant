@@ -12,19 +12,19 @@ Automated job application pipeline: scrape job listings (Firecrawl), analyze fit
 # Install
 pip install -e ".[dev]"
 
-# CLI (installed as `jaa`)
-jaa scrape <url>              # Full pipeline: scrape → analyze → generate docs
-jaa search <query>            # Web search for jobs
-jaa discover                  # Run all configured searches/crawls from data/search_config.json
-jaa list                      # List scraped jobs
-jaa rank                      # Rank jobs by fit score
-jaa analyze <job_id>          # Re-analyze a stored job
-jaa generate <job_id>         # Re-generate resume + cover letter
-jaa batch-generate            # Generate docs for top-ranked jobs
-jaa apply <job_id>            # Browser automation to fill application forms
-jaa skills top|roles|trends|gaps
-jaa answers list|search|add|delete|import|stats
-jaa calibrate                 # Score calibration report
+# CLI (installed as `job`)
+job scrape <url>              # Full pipeline: scrape → analyze → generate docs
+job search <query>            # Web search for jobs
+job discover                  # Run all configured searches/crawls from data/search_config.json
+job list                      # List scraped jobs
+job rank                      # Rank jobs by fit score
+job analyze <job_id>          # Re-analyze a stored job
+job generate <job_id>         # Re-generate resume + cover letter
+job batch-generate            # Generate docs for top-ranked jobs
+job apply <job_id>            # Browser automation to fill application forms
+job skills top|roles|trends|gaps
+job answers list|search|add|delete|import|stats
+job calibrate                 # Score calibration report
 
 # Lint
 ruff check src/ tests/
@@ -44,7 +44,7 @@ mypy src/
 
 ```
 src/
-├── main.py              # Click CLI entry point (registered as `jaa`)
+├── main.py              # Click CLI entry point (registered as `job`)
 ├── models.py            # Pydantic models: JobPosting, JobAnalysis, ResumeContent, CoverLetterContent, ScorePenalty
 ├── scraper/
 │   ├── firecrawl_client.py   # Firecrawl scraping + Claude extraction fallback
@@ -70,7 +70,7 @@ src/
 
 **Key data files:**
 - `data/master_resume.json` — source of truth for all resume/cover letter generation and skill gap analysis
-- `data/search_config.json` — search queries and career page URLs for `jaa discover`
+- `data/search_config.json` — search queries and career page URLs for `job discover`
 - `data/screening_answers.json` — cached answers for application form filling
 
 ## Key Patterns

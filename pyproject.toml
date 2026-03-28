@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-jaa = "src.main:cli"
+job = "src.main:cli"
 
 [build-system]
 requires = ["setuptools>=68.0"]

@@ -1,2 +1,2 @@
 [console_scripts]
-jaa = src.main:cli
+job = src.main:cli
