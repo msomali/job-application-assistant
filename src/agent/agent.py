@@ -21,6 +21,7 @@ from claude_agent_sdk import (
 
 from src.agent.computer_use import fill_application
 from src.analyzer.job_analyzer import analyze_job, load_master_resume
+from src.config import get as cfg
 from src.db.database import (
     get_analysis,
     get_job,
@@ -247,7 +248,7 @@ async def tool_generate_documents(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def tool_list_top_jobs(args: dict[str, Any]) -> dict[str, Any]:
     init_db()
-    min_score = args.get("min_score", 60)
+    min_score = args.get("min_score", cfg("scoring", "min_score_rank", 60))
     limit = args.get("limit", 10)
 
     jobs = list_jobs(limit=100)
@@ -381,6 +382,81 @@ async def tool_apply_to_job(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@tool(
+    "linkedin_search",
+    "Search LinkedIn directly for jobs matching a query. "
+    "Requires a saved LinkedIn browser session (job login --site linkedin). "
+    "Scrapes LinkedIn's job search UI via Playwright and analyzes each result.",
+    {"query": str, "limit": int},
+)
+async def tool_linkedin_search(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    query_str = args["query"]
+    limit = args.get("limit", 10)
+
+    from src.scraper.browser_session import has_session
+
+    if not has_session("linkedin"):
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "No LinkedIn session found. User needs to run 'job login --site linkedin' first.",
+                }
+            ]
+        }
+
+    from src.scraper.linkedin import scrape_linkedin_job, search_linkedin
+
+    try:
+        results = search_linkedin(query_str, limit=limit)
+    except RuntimeError as e:
+        return {"content": [{"type": "text", "text": str(e)}]}
+
+    new_jobs = []
+    for result in results:
+        url = result["url"]
+        try:
+            markdown = scrape_linkedin_job(url)
+        except Exception as e:
+            logger.debug("Failed to scrape LinkedIn job %s: %s", url, e)
+            continue
+
+        if not markdown:
+            continue
+
+        try:
+            extracted = _extract_with_claude(markdown)
+            job = JobPosting(**extracted)
+        except Exception as e:
+            logger.debug("Skipping unparseable LinkedIn job %s: %s", url, e)
+            continue
+
+        job_id = save_job(job.model_dump(), url, markdown)
+        analysis = analyze_job(job)
+        save_analysis(job_id, analysis.model_dump())
+
+        new_jobs.append({
+            "id": job_id,
+            "title": job.title,
+            "company": job.company,
+            "fit_score": analysis.fit_score,
+        })
+
+    logger.info("tool_linkedin_search found %d jobs for: %s", len(new_jobs), query_str)
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {"query": query_str, "source": "linkedin", "jobs_found": len(new_jobs), "jobs": new_jobs},
+                    indent=2,
+                ),
+            }
+        ]
+    }
+
+
 # --- Agent setup ---
 
 
@@ -392,6 +468,7 @@ def create_tools_server():
         tools=[
             tool_discover_jobs,
             tool_search_and_analyze,
+            tool_linkedin_search,
             tool_scrape_and_analyze,
             tool_generate_documents,
             tool_list_top_jobs,
@@ -409,6 +486,7 @@ You are a Job Application Assistant agent. Your job is to help the user find, an
 You have the following tools:
 - discover_jobs: Run all configured searches and crawls to find new jobs
 - search_and_analyze: Search for jobs with a specific query
+- linkedin_search: Search LinkedIn directly (requires saved LinkedIn session)
 - scrape_and_analyze_url: Scrape and analyze a single job URL
 - generate_documents: Generate a tailored resume and cover letter for a job
 - list_top_jobs: List top-ranked jobs by fit score

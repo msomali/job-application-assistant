@@ -86,7 +86,8 @@ class TestAnalyzeJob:
             analyzer.analyze_job(sample_job)
 
             call_args = mock_client.messages.create.call_args
-            prompt = call_args[1]["messages"][0]["content"]
+            content_blocks = call_args[1]["messages"][0]["content"]
+            prompt = " ".join(b["text"] for b in content_blocks)
             assert "Senior Data Engineer" in prompt
             assert "Acme Corp" in prompt
             assert "PySpark" in prompt

@@ -276,7 +276,8 @@ class TestGetAnalytics:
             assert stats["analyzed"] == 1
             assert stats["applied"] == 1
             assert "conversion" in stats
-            assert "discover_to_docs" in stats["conversion"]
+            assert "discover_to_collected" in stats["conversion"]
+            assert "collected_to_docs" in stats["conversion"]
             assert "docs_to_applied" in stats["conversion"]
             assert "applied_to_interview" in stats["conversion"]
             assert "interview_to_offer" in stats["conversion"]

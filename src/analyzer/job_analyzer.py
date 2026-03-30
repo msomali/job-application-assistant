@@ -16,35 +16,12 @@ logger = logging.getLogger(__name__)
 MASTER_RESUME_PATH = Path(__file__).parent.parent.parent / "data" / "master_resume.json"
 SCREENING_PATH = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
 
-ANALYSIS_PROMPT = """\
+ANALYSIS_SYSTEM_PROMPT = """\
 You are an expert career advisor and resume strategist.
 
-Analyze the following job posting against the candidate's profile. Be honest and specific.
+Analyze the provided job posting against the candidate's profile. Be honest and specific.
 
-## Job Posting
-Title: {title}
-Company: {company}
-Location: {location}
-Type: {job_type}
-Experience Level: {experience_level}
-
-### Description
-{description}
-
-### Requirements
-{requirements}
-
-### Responsibilities
-{responsibilities}
-
-## Candidate Profile
-{resume}
-
-## Candidate Preferences
-{preferences}
-
-## Your Task
-Analyze how well this candidate fits the role using a penalty-based scoring system.
+Use a penalty-based scoring system:
 
 ### Scoring Rules
 1. Start with a base_score (0-100) reflecting how well the candidate's skills and experience match the job requirements. 90+ means near-perfect match.
@@ -72,8 +49,41 @@ Return a JSON object with exactly these fields:
 - "keywords": list of strings — important terms from the job posting to emphasize in the resume
 - "tailoring_strategy": string — specific advice on what to highlight, reorder, or emphasize in the resume and cover letter for this role
 
-If no adjustments apply, return an empty penalties list. Return ONLY valid JSON, no markdown fences or extra text.
-"""
+If no adjustments apply, return an empty penalties list. Return ONLY valid JSON, no markdown fences or extra text."""
+
+
+def _build_preferences_text(resume: dict) -> str:
+    """Build preferences text from resume data."""
+    prefs = resume.get("preferences", {})
+    pref_lines = []
+    if prefs.get("target_roles"):
+        pref_lines.append(f"Target roles: {', '.join(prefs['target_roles'])}")
+    if prefs.get("locations"):
+        pref_lines.append(f"Preferred locations: {', '.join(prefs['locations'])}")
+    if prefs.get("work_modes"):
+        pref_lines.append(f"Work modes: {', '.join(prefs['work_modes'])}")
+    if prefs.get("job_types"):
+        pref_lines.append(f"Job types: {', '.join(prefs['job_types'])}")
+    if prefs.get("min_salary"):
+        pref_lines.append(f"Minimum salary: {prefs['min_salary']}")
+    return "\n".join(pref_lines) if pref_lines else "No preferences specified"
+
+
+def _format_job_text(job: JobPosting) -> str:
+    """Format job posting details for Claude prompts."""
+    requirements = "\n".join(f"- {r}" for r in job.requirements) or "Not listed"
+    responsibilities = "\n".join(f"- {r}" for r in job.responsibilities) or "Not listed"
+    return (
+        f"## Job Posting\n"
+        f"Title: {job.title}\n"
+        f"Company: {job.company}\n"
+        f"Location: {job.location or 'Not specified'}\n"
+        f"Type: {job.job_type or 'Not specified'}\n"
+        f"Experience Level: {job.experience_level or 'Not specified'}\n\n"
+        f"### Description\n{job.description}\n\n"
+        f"### Requirements\n{requirements}\n\n"
+        f"### Responsibilities\n{responsibilities}"
+    )
 
 
 def load_master_resume() -> dict:
@@ -106,38 +116,40 @@ def analyze_job(job: JobPosting, *, redact: bool = True) -> JobAnalysis:
         logger.info("PII redacted: %d fields protected", guard.field_count)
 
     # Extract candidate preferences for scoring rules
-    prefs = resume.get("preferences", {})
-    pref_lines = []
-    if prefs.get("target_roles"):
-        pref_lines.append(f"Target roles: {', '.join(prefs['target_roles'])}")
-    if prefs.get("locations"):
-        pref_lines.append(f"Preferred locations: {', '.join(prefs['locations'])}")
-    if prefs.get("work_modes"):
-        pref_lines.append(f"Work modes: {', '.join(prefs['work_modes'])}")
-    if prefs.get("job_types"):
-        pref_lines.append(f"Job types: {', '.join(prefs['job_types'])}")
-    if prefs.get("min_salary"):
-        pref_lines.append(f"Minimum salary: {prefs['min_salary']}")
-    preferences_text = "\n".join(pref_lines) if pref_lines else "No preferences specified"
+    preferences_text = _build_preferences_text(resume)
 
-    prompt = ANALYSIS_PROMPT.format(
-        title=job.title,
-        company=job.company,
-        location=job.location or "Not specified",
-        job_type=job.job_type or "Not specified",
-        experience_level=job.experience_level or "Not specified",
-        description=job.description,
-        requirements="\n".join(f"- {r}" for r in job.requirements) or "Not listed",
-        responsibilities="\n".join(f"- {r}" for r in job.responsibilities)
-        or "Not listed",
-        resume=json.dumps(resume, indent=2),
-        preferences=preferences_text,
-    )
+    # Build job-specific content (changes per job)
+    job_text = _format_job_text(job)
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
+        system=[
+            {
+                "type": "text",
+                "text": ANALYSIS_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"## Candidate Profile\n{json.dumps(resume, separators=(',', ':'))}"
+                            f"\n\n## Candidate Preferences\n{preferences_text}"
+                        ),
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": job_text,
+                    },
+                ],
+            }
+        ],
     )
 
     response_text = message.content[0].text

@@ -20,28 +20,9 @@ SCREENING_PATH = Path(__file__).parent.parent.parent / "data" / "screening_answe
 
 TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "cover_letter.tex"
 
-COVER_LETTER_PROMPT = """\
+COVER_LETTER_SYSTEM_PROMPT = """\
 You are an expert cover letter writer. Write a compelling, personalized cover letter.
 
-## Job Posting
-Title: {title}
-Company: {company}
-Location: {location}
-Description: {description}
-
-## Key Requirements
-{requirements}
-
-## Candidate's Matching Skills
-{matching_skills}
-
-## Tailoring Strategy
-{tailoring_strategy}
-
-## Candidate Profile
-{resume}
-
-## Instructions
 Write a cover letter that sounds like a real person wrote it. Natural, warm, and confident.
 
 IMPORTANT STYLE RULES:
@@ -64,8 +45,7 @@ Return a JSON object with these fields:
 - "closing_paragraph": string
 - "sign_off": string (e.g., "Sincerely,")
 
-Return ONLY valid JSON, no markdown fences.
-"""
+Return ONLY valid JSON, no markdown fences."""
 
 
 @retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(APIError, APITimeoutError, RateLimitError))
@@ -90,21 +70,42 @@ def generate_cover_letter_content(
         resume_for_llm = guard.redact_dict(master_resume)
         logger.info("PII redacted: %d fields protected", guard.field_count)
 
-    prompt = COVER_LETTER_PROMPT.format(
-        title=job.title,
-        company=job.company,
-        location=job.location or "Not specified",
-        description=job.description,
-        requirements="\n".join(f"- {r}" for r in job.requirements),
-        matching_skills=", ".join(analysis.matching_skills),
-        tailoring_strategy=analysis.tailoring_strategy,
-        resume=json.dumps(resume_for_llm, indent=2),
-    )
+    requirements_text = "\n".join(f"- {r}" for r in job.requirements)
+    matching_text = ", ".join(analysis.matching_skills)
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
+        system=[
+            {
+                "type": "text",
+                "text": COVER_LETTER_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"## Candidate Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}",
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
+                            f"Location: {job.location or 'Not specified'}\n"
+                            f"Description: {job.description}\n\n"
+                            f"## Key Requirements\n{requirements_text}\n\n"
+                            f"## Candidate's Matching Skills\n{matching_text}\n\n"
+                            f"## Tailoring Strategy\n{analysis.tailoring_strategy}"
+                        ),
+                    },
+                ],
+            }
+        ],
     )
 
     response_text = message.content[0].text

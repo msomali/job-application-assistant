@@ -21,6 +21,9 @@ job rank                      # Rank jobs by fit score
 job analyze <job_id>          # Re-analyze a stored job
 job generate <job_id>         # Re-generate resume + cover letter
 job batch-generate            # Generate docs for top-ranked jobs
+job discover --batch          # Batch API analysis (50% cheaper, async)
+job batch-status <batch_id>   # Check batch job status
+job batch-collect <batch_id>  # Save batch results to database
 job apply <job_id>            # Browser automation to fill application forms
 job skills top|roles|trends|gaps
 job answers list|search|add|delete|import|stats
@@ -46,8 +49,9 @@ mypy src/
 src/
 ├── main.py              # Click CLI entry point (registered as `job`)
 ├── models.py            # Pydantic models: JobPosting, JobAnalysis, ResumeContent, CoverLetterContent, ScorePenalty
+├── batch.py             # Anthropic Batch API for async bulk analysis (50% cost savings)
 ├── scraper/
-│   ├── firecrawl_client.py   # Firecrawl scraping + Claude extraction fallback
+│   ├── firecrawl_client.py   # Firecrawl scraping + Haiku extraction fallback
 │   └── job_discovery.py      # Search, crawl, discover_all from config
 ├── analyzer/
 │   └── job_analyzer.py       # Claude-powered fit scoring with penalty system (base_score + adjustments)
@@ -80,6 +84,7 @@ src/
 - **PDF generation**: Claude returns structured Pydantic models → content injected into LaTeX templates → compiled with `pdflatex`. Requires MacTeX installed.
 - **Answer cache**: SQLite-backed with SHA-256 hash for exact lookup + SequenceMatcher fuzzy fallback (0.75 threshold).
 - **Skill analytics**: Extracted from existing analysis data (no extra LLM calls) into `job_skills` table on every `save_analysis()`.
+- **API cost optimizations**: (1) Prompt caching (`cache_control: ephemeral`) on system prompts and resume content across all API calls — 90% discount on cached tokens. (2) Model tiering — Haiku for job extraction, Sonnet for analysis/generation. (3) Batch API for bulk discovery analysis — 50% discount. (4) Minified JSON (`separators=(',',':')`) for resume data sent to Claude.
 
 ## Environment
 

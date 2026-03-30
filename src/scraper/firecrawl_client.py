@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 
 import anthropic
 from anthropic import APIError, APITimeoutError, RateLimitError
@@ -13,8 +14,26 @@ from src.utils import retry
 
 logger = logging.getLogger(__name__)
 
-EXTRACT_PROMPT = """\
-Extract all job posting details from the following page content.
+# Minimum signals to consider a page as a job posting
+_JOB_SIGNALS = [
+    "apply", "requirements", "responsibilities", "qualifications",
+    "experience", "salary", "benefits", "job description",
+    "we are looking for", "about the role", "what you'll do",
+    "what you will do", "who you are", "about this role",
+    "your responsibilities", "minimum qualifications", "preferred qualifications",
+]
+
+
+def _looks_like_job_page(markdown: str) -> bool:
+    """Quick heuristic: does the page contain enough job-posting signals?"""
+    sample = markdown[:4000].lower()
+    matches = sum(1 for signal in _JOB_SIGNALS if signal in sample)
+    return matches >= 2
+
+EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
+
+EXTRACT_SYSTEM_PROMPT = """\
+Extract all job posting details from the provided page content.
 Return a JSON object with exactly these fields:
 
 - "title": job title (string, required)
@@ -30,11 +49,7 @@ Return a JSON object with exactly these fields:
 - "application_url": direct application URL if found (string or null)
 - "date_posted": posting date if found (string or null)
 
-Return ONLY valid JSON, no markdown fences or extra text.
-
-Page content:
-{markdown}
-"""
+Return ONLY valid JSON, no markdown fences or extra text."""
 
 
 def get_client() -> FirecrawlApp:
@@ -48,18 +63,41 @@ def get_client() -> FirecrawlApp:
 
 @retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(APIError, APITimeoutError, RateLimitError))
 def _extract_with_claude(markdown: str) -> dict:
-    """Use Claude to extract structured job data from markdown."""
-    logger.debug("Extracting job data with Claude (markdown length: %d)", len(markdown))
+    """Use Claude to extract structured job data from markdown.
+
+    Raises ValueError if the page doesn't look like a job posting.
+    """
+    if not _looks_like_job_page(markdown):
+        raise ValueError("Page does not appear to be a job posting")
+
+    # Cap input to avoid large token usage
+    truncated = markdown[:12000]
+    logger.debug("Extracting job data with Claude (markdown length: %d)", len(truncated))
     client = anthropic.Anthropic()
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=EXTRACTION_MODEL,
         max_tokens=3000,
-        messages=[
-            {"role": "user", "content": EXTRACT_PROMPT.format(markdown=markdown)}
+        system=[
+            {
+                "type": "text",
+                "text": EXTRACT_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
         ],
+        messages=[{"role": "user", "content": truncated}],
     )
     logger.debug("Claude extraction complete")
-    return json.loads(message.content[0].text)
+    raw = message.content[0].text.strip()
+    # Strip markdown code fences if present
+    raw = re.sub(r"^\s*```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```\s*$", "", raw)
+    data = json.loads(raw)
+
+    # Validate required fields
+    if not data.get("title") or not data.get("company"):
+        raise ValueError(f"Missing required fields: title={data.get('title')}, company={data.get('company')}")
+
+    return data
 
 
 @retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(Exception,))

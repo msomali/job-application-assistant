@@ -4,13 +4,20 @@
 __pycache__/
 *.pyc
 
+# Python packaging
+*.egg-info/
+dist/
+build/
+
 # Output
 output/
+screenshots/
+
+# Logs
+logs/
 
 # LaTeX artifacts
 *.aux
-*.log
-*.out
 *.fls
 *.fdb_latexmk
 *.synctex.gz
@@ -20,18 +27,25 @@ output/
 .vscode/
 *.swp
 
+# Linting / testing caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
 # Data
 data/jobs.db
+data/jobs.db-shm
+data/jobs.db-wal
+data/config.yaml
 data/master_resume.json
 data/screening_answers.json
 data/search_config.json
+data/browser_sessions/
 
 # Claude
-chat.txt
+.chats/
 .claude/
 CLAUDE.md
 
 # Misc
-competitive_analysis.md
-idea.md
-plan.md
+.context/

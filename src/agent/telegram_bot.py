@@ -9,15 +9,17 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from telegram import Bot, Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
+from src.config import get as cfg
 from src.db.database import (
     get_analysis,
     get_analytics,
@@ -37,6 +39,9 @@ from src.utils import async_retry
 # Pending approvals: job_id -> asyncio.Event
 _pending_approvals: dict[int, asyncio.Event] = {}
 _approval_results: dict[int, bool] = {}
+
+# Background tasks: prevent garbage collection and log errors
+_background_tasks: set[asyncio.Task] = set()
 
 # Users waiting to paste a job description: user_id -> url (optional)
 _paste_waiting: dict[int, str] = {}
@@ -93,6 +98,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Discovery:*\n"
         "/discover - Run job discovery pipeline + send digest\n"
         "/search <query> - Search for jobs with a query\n"
+        "/linkedin <query> - Search LinkedIn directly\n"
         "/scrape <url> - Scrape and analyze a single job URL\n"
         "/paste [url] - Paste a job description (for LinkedIn etc.)\n\n"
         "*Browse:*\n"
@@ -102,13 +108,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status - Application tracking summary\n"
         "/analytics - Conversion rates and stats\n"
         "/calibrate - Score calibration vs outcomes\n\n"
+        "*Review:*\n"
+        "/collect [min\\_score] - Shortlist top-scored jobs\n"
+        "/review - Review collected jobs with details\n"
+        "/approve <ids> - Generate docs for approved jobs\n"
+        "/reject <ids> - Skip these jobs\n\n"
         "*Actions:*\n"
         "/generate <id> - Generate resume + cover letter\n"
         "/apply <id> - Fill out application form (browser)\n"
         "/send <id> - Send generated docs to this chat\n"
         "/update <id> <status> - Update job status (interview/offer/rejected)\n\n"
+        "*Session:*\n"
+        "/login - How to save browser login sessions\n\n"
         "*During applications:*\n"
-        "Reply `submit` to confirm, `skip` to cancel.",
+        "Reply `submit` to confirm, `skip` to cancel\n"
+        "/pause <id> - Pause a running application\n"
+        "/resume <id> - Resume a paused application",
         parse_mode="Markdown",
     )
 
@@ -138,14 +153,15 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     init_db()
     jobs = list_jobs(limit=50)
-    top = [j for j in jobs if j.get("fit_score") and j["fit_score"] >= 70]
+    notify_score = cfg("scoring", "min_score_notify", 70)
+    top = [j for j in jobs if j.get("fit_score") and j["fit_score"] >= notify_score]
     top.sort(key=lambda j: j["fit_score"], reverse=True)
 
     if not top:
-        await update.message.reply_text("No jobs with fit score >= 70 found.")
+        await update.message.reply_text(f"No jobs with fit score >= {notify_score} found.")
         return
 
-    lines = ["*Top Matches (score >= 70):*\n"]
+    lines = [f"*Top Matches (score >= {notify_score}):*\n"]
     for j in top[:10]:
         status = j.get("status") or "new"
         lines.append(
@@ -325,10 +341,17 @@ async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results = discover_all()
         new_jobs = []
 
+        from src.db.database import job_exists_by_url
+
         for result in results:
             url = result["url"]
             markdown = result.get("markdown", "")
             if not markdown.strip():
+                continue
+
+            # Skip already-known jobs (discover_all pre-filters, but double-check)
+            if job_exists_by_url(url):
+                logger.debug("Already in DB, skipping: %s", url)
                 continue
 
             try:
@@ -433,6 +456,73 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("Search failed for query: %s", query_str)
         await update.message.reply_text(f"Search failed: {e}")
+
+
+async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Search LinkedIn for jobs."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /linkedin <search query>")
+        return
+    rate_msg = _check_rate_limit(update.effective_user.id)
+    if rate_msg:
+        await update.message.reply_text(rate_msg)
+        return
+
+    query_str = " ".join(context.args)
+
+    from src.scraper.browser_session import has_session
+
+    if not has_session("linkedin"):
+        await update.message.reply_text(
+            "No LinkedIn session. Run `job login --site linkedin` on your machine first."
+        )
+        return
+
+    init_db()
+    await update.message.reply_text(f"Searching LinkedIn: {query_str}")
+
+    try:
+        from src.analyzer.job_analyzer import analyze_job
+        from src.scraper.firecrawl_client import _extract_with_claude
+        from src.scraper.linkedin import scrape_linkedin_job, search_linkedin
+
+        results = search_linkedin(query_str, limit=10)
+        if not results:
+            await update.message.reply_text("No LinkedIn jobs found.")
+            return
+
+        lines = [f"*LinkedIn: {len(results)} results*\n"]
+        for result in results:
+            url = result["url"]
+            try:
+                markdown = scrape_linkedin_job(url)
+                if not markdown:
+                    continue
+                extracted = _extract_with_claude(markdown)
+                from src.models import JobPosting
+                job = JobPosting(**extracted)
+                job_id = save_job(job.model_dump(), url, markdown)
+                analysis = analyze_job(job)
+                save_analysis(job_id, analysis.model_dump())
+                lines.append(
+                    f"`{job_id:>3}` | {analysis.fit_score:>3}% | "
+                    f"{job.title[:25]} @ {job.company[:15]}"
+                )
+            except Exception as e:
+                logger.debug("LinkedIn scrape/analysis failed for %s: %s", url, e)
+                continue
+
+        if len(lines) > 1:
+            lines.append("\nUse /job <id> for details.")
+            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        else:
+            await update.message.reply_text("Could not parse any LinkedIn results.")
+
+    except Exception as e:
+        logger.exception("LinkedIn search failed: %s", query_str)
+        await update.message.reply_text(f"LinkedIn search failed: {e}")
 
 
 async def cmd_scrape(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,38 +765,221 @@ async def cmd_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
-    try:
-        from src.agent.computer_use import fill_application
-        from src.analyzer.job_analyzer import load_master_resume
+    async def _run_apply():
+        """Background task so the bot can still process approval replies."""
+        try:
+            from src.agent.computer_use import fill_application
+            from src.analyzer.job_analyzer import load_master_resume
 
-        master_resume = load_master_resume()
+            master_resume = load_master_resume()
 
-        result = await fill_application(
-            application_url=application_url,
-            master_resume=master_resume,
-            resume_path=app_data["resume_path"],
-            cover_letter_path=app_data.get("cover_letter_path", ""),
-            job_id=job_id,
-            headless=False,
+            result = await fill_application(
+                application_url=application_url,
+                master_resume=master_resume,
+                resume_path=app_data["resume_path"],
+                cover_letter_path=app_data.get("cover_letter_path", ""),
+                job_id=job_id,
+                headless=False,
+            )
+
+            if result["status"] == "submitted":
+                await send_notification(f"Application for job #{job_id} submitted!")
+            elif result["status"] == "failed":
+                reason = result.get("message", "Unknown error")
+                await send_notification(f"Application for job #{job_id} failed: {reason}")
+            elif result["status"] == "skipped_by_user":
+                await send_notification(f"Application for job #{job_id} was skipped.")
+            elif result["status"] == "blocked":
+                await send_notification(
+                    f"Application got stuck: {result.get('message', 'unknown reason')}"
+                )
+            else:
+                await send_notification(
+                    f"Application result: {result['status']} "
+                    f"({result.get('steps_taken', 0)} steps)"
+                )
+
+        except Exception as e:
+            logger.exception("Application failed for job ID: %d", job_id)
+            await send_notification(f"Application failed: {e}")
+
+    task = asyncio.create_task(_run_apply(), name=f"apply_job_{job_id}")
+
+    def _task_done(t: asyncio.Task):
+        _background_tasks.discard(t)
+        if t.cancelled():
+            logger.warning("Apply task for job %d was cancelled", job_id)
+        elif exc := t.exception():
+            logger.exception("Apply task for job %d failed: %s", job_id, exc)
+
+    task.add_done_callback(_task_done)
+    _background_tasks.add(task)
+
+
+async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shortlist top-scored jobs for review."""
+    if not _is_authorized(update):
+        return
+    rate_msg = _check_rate_limit(update.effective_user.id)
+    if rate_msg:
+        await update.message.reply_text(rate_msg)
+        return
+
+    min_score = 60
+    if context.args:
+        try:
+            min_score = int(context.args[0])
+        except ValueError:
+            pass
+
+    init_db()
+    from src.db.database import bulk_collect, get_uncollected_jobs
+
+    uncollected = get_uncollected_jobs(min_score=min_score, limit=20)
+    if not uncollected:
+        await update.message.reply_text(
+            f"No uncollected jobs with score >= {min_score}."
+        )
+        return
+
+    job_ids = [j["id"] for j in uncollected]
+    count = bulk_collect(job_ids)
+
+    lines = [f"*Collected {count} jobs* (score >= {min_score}):\n"]
+    for j in uncollected:
+        lines.append(f"#{j['id']} — {j['fit_score']}pts — {j['title']} at {j['company']}")
+    lines.append("\nUse /review to see details, /approve <ids> to generate docs.")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Review collected jobs before approving."""
+    if not _is_authorized(update):
+        return
+
+    init_db()
+    from src.db.database import get_collected_jobs
+
+    jobs = get_collected_jobs()
+    if not jobs:
+        await update.message.reply_text("No collected jobs to review. Use /collect first.")
+        return
+
+    for j in jobs:
+        skills = ", ".join(j.get("matching_skills", [])[:5])
+        gaps = ", ".join(j.get("gaps", [])[:3])
+        text = (
+            f"*#{j['id']} — {j['title']}*\n"
+            f"Company: {j['company']} | Location: {j['location']}\n"
+            f"Score: {j['fit_score']}/100\n"
+            f"Skills: {skills}\n"
+        )
+        if gaps:
+            text += f"Gaps: {gaps}\n"
+        strategy = j.get("tailoring_strategy", "")
+        if strategy:
+            text += f"Strategy: {strategy[:150]}\n"
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    await update.message.reply_text(
+        f"{len(jobs)} jobs in review.\n"
+        "/approve 1 2 3 — generate docs\n"
+        "/reject 4 5 — skip these jobs"
+    )
+
+
+async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Approve collected jobs and generate docs."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /approve <job_id> [job_id ...]")
+        return
+    rate_msg = _check_rate_limit(update.effective_user.id)
+    if rate_msg:
+        await update.message.reply_text(rate_msg)
+        return
+
+    init_db()
+    from src.analyzer.job_analyzer import load_master_resume
+    from src.generator.cover_letter_generator import (
+        generate_cover_letter_content,
+        render_cover_letter,
+    )
+    from src.generator.resume_generator import generate_resume_content, render_resume
+    from src.models import JobAnalysis, JobPosting
+
+    master_resume = load_master_resume()
+    output_dir = Path(__file__).parent.parent.parent / "output"
+
+    for arg in context.args:
+        try:
+            job_id = int(arg)
+        except ValueError:
+            await update.message.reply_text(f"Invalid ID: {arg}")
+            continue
+
+        job_data = get_job(job_id)
+        if not job_data:
+            await update.message.reply_text(f"Job {job_id} not found.")
+            continue
+
+        analysis_data = get_analysis(job_id)
+        if not analysis_data:
+            await update.message.reply_text(f"No analysis for job {job_id}.")
+            continue
+
+        await update.message.reply_text(
+            f"Generating docs for #{job_id}: {job_data['title']} at {job_data['company']}..."
         )
 
-        if result["status"] == "submitted":
-            update_application(job_id, status="applied")
-            await update.message.reply_text(f"Application for job {job_id} submitted!")
-        elif result["status"] == "skipped_by_user":
-            await update.message.reply_text(f"Application for job {job_id} was skipped.")
-        elif result["status"] == "blocked":
-            await update.message.reply_text(
-                f"Application got stuck: {result.get('message', 'unknown reason')}"
-            )
-        else:
-            await update.message.reply_text(
-                f"Application result: {result['status']} ({result.get('steps_taken', 0)} steps)"
+        try:
+            job = JobPosting(**{k: job_data[k] for k in JobPosting.model_fields if k in job_data})
+            analysis = JobAnalysis(
+                **{k: analysis_data[k] for k in JobAnalysis.model_fields if k in analysis_data}
             )
 
-    except Exception as e:
-        logger.exception("Application failed for job ID: %d", job_id)
-        await update.message.reply_text(f"Application failed: {e}")
+            import re
+            slug = re.sub(r"[^a-z0-9]+", "-", f"{job.company}-{job.title}".lower()).strip("-")[:40]
+            date_str = datetime.now(UTC).strftime("%Y%m%d")
+            job_output = output_dir / f"{slug}_{date_str}_{job_id}"
+
+            resume_content = generate_resume_content(job, analysis, master_resume)
+            resume_pdf = render_resume(resume_content, master_resume, job_output)
+            update_application(job_id, resume_path=str(resume_pdf))
+
+            cover_content = generate_cover_letter_content(job, analysis, master_resume)
+            cover_pdf = render_cover_letter(cover_content, master_resume, job_output)
+            update_application(job_id, cover_letter_path=str(cover_pdf), status="docs_generated")
+
+            await update.message.reply_text(
+                f"Docs ready for #{job_id}. Use /send {job_id} or /apply {job_id}."
+            )
+        except Exception as e:
+            logger.exception("Doc generation failed for job %d", job_id)
+            await update.message.reply_text(f"Failed for #{job_id}: {e}")
+
+
+async def cmd_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject collected jobs."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /reject <job_id> [job_id ...]")
+        return
+
+    init_db()
+    rejected = []
+    for arg in context.args:
+        try:
+            job_id = int(arg)
+            update_application(job_id, status="rejected")
+            rejected.append(str(job_id))
+        except (ValueError, Exception) as e:
+            await update.message.reply_text(f"Error rejecting {arg}: {e}")
+
+    if rejected:
+        await update.message.reply_text(f"Rejected jobs: {', '.join(rejected)}")
 
 
 async def cmd_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -884,16 +1157,184 @@ async def cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
-async def request_approval(job_id: int, message: str) -> bool:
-    """Send an approval request and wait for user response.
+async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pause a running application."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /pause <job_id>")
+        return
 
+    try:
+        job_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid job ID.")
+        return
+
+    from src.agent.computer_use import request_pause
+
+    request_pause(job_id)
+    await update.message.reply_text(
+        f"Pause signal sent for job #{job_id}.\n"
+        "Application will pause after the current step.\n"
+        f"Resume later with /resume {job_id}"
+    )
+
+
+async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Resume a paused application."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /resume <job_id>")
+        return
+    rate_msg = _check_rate_limit(update.effective_user.id)
+    if rate_msg:
+        await update.message.reply_text(rate_msg)
+        return
+
+    try:
+        job_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid job ID.")
+        return
+
+    init_db()
+    from src.db.database import get_pause_state
+
+    pause_state = get_pause_state(job_id)
+    if not pause_state:
+        await update.message.reply_text(f"Job #{job_id} has no saved pause state.")
+        return
+
+    job_data = get_job(job_id)
+    app_data = get_application(job_id)
+    if not job_data or not app_data:
+        await update.message.reply_text(f"Job #{job_id} not found.")
+        return
+
+    application_url = job_data.get("application_url") or job_data.get("url", "")
+    await update.message.reply_text(
+        f"Resuming application for *{job_data['title']}* at {job_data['company']}\n"
+        f"Paused at step {pause_state['step']}. Reopening browser...",
+        parse_mode="Markdown",
+    )
+
+    try:
+        from src.agent.computer_use import fill_application
+        from src.analyzer.job_analyzer import load_master_resume
+
+        master_resume = load_master_resume()
+
+        result = await fill_application(
+            application_url=application_url,
+            master_resume=master_resume,
+            resume_path=app_data["resume_path"],
+            cover_letter_path=app_data.get("cover_letter_path", ""),
+            job_id=job_id,
+            headless=False,
+            resume=True,
+        )
+
+        if result["status"] == "submitted":
+            await update.message.reply_text(f"Application for job #{job_id} submitted!")
+        elif result["status"] == "failed":
+            reason = result.get("message", "Unknown error")
+            await update.message.reply_text(
+                f"Application for job #{job_id} failed.\nReason: {reason}"
+            )
+        elif result["status"] == "paused":
+            await update.message.reply_text(
+                f"Application paused again at step {result.get('steps_taken', '?')}.\n"
+                f"Use /resume {job_id} to continue."
+            )
+        else:
+            await update.message.reply_text(
+                f"Application result: {result['status']} ({result.get('steps_taken', 0)} steps)"
+            )
+    except Exception as e:
+        logger.exception("Resume failed for job ID: %d", job_id)
+        await update.message.reply_text(f"Resume failed: {e}")
+
+
+async def cmd_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show instructions for saving browser login sessions."""
+    if not _is_authorized(update):
+        return
+
+    from src.scraper.browser_session import list_sessions
+
+    sessions = list_sessions()
+    session_list = "\n".join(f"  • {s}" for s in sessions) if sessions else "  None"
+
+    await update.message.reply_text(
+        "*Browser Sessions*\n\n"
+        "To save a login session, run on your machine:\n"
+        "`job login --site linkedin`\n"
+        "`job login --site indeed`\n\n"
+        "This opens a browser — log in manually, then close it. "
+        "Session is saved and reused for future scraping and applications.\n\n"
+        f"*Saved sessions:*\n{session_list}",
+        parse_mode="Markdown",
+    )
+
+
+async def request_approval(job_id: int, message: str) -> bool:
+    """Send an approval request with inline buttons and wait for user response.
+
+    Uses inline keyboard buttons for reliable approval instead of free-text matching.
     Returns True if approved, False if skipped.
     """
     event = asyncio.Event()
     _pending_approvals[job_id] = event
-    await send_notification(message + "\n\nReply *submit* to confirm or *skip* to cancel.")
+    logger.info("Set pending approval for job %d, dict id=%d, keys=%s", job_id, id(_pending_approvals), list(_pending_approvals.keys()))
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Submit", callback_data=f"approve_{job_id}"),
+            InlineKeyboardButton("Skip", callback_data=f"skip_{job_id}"),
+        ]
+    ])
+    token, user_id = _get_config()
+    bot = Bot(token=token)
+    await bot.send_message(
+        chat_id=user_id,
+        text=message,
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+    logger.info("Approval request sent for job %d (waiting for button click)", job_id)
     await event.wait()
     return _approval_results.pop(job_id, False)
+
+
+async def _handle_approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button presses for submit/skip approval."""
+    query = update.callback_query
+    logger.info("Callback received: %s", query.data)
+    await query.answer()  # Acknowledge the button press
+
+    data = query.data
+    if data.startswith("approve_"):
+        job_id = int(data.split("_", 1)[1])
+        logger.info("Approve button for job %d, dict id=%d, pending: %s", job_id, id(_pending_approvals), list(_pending_approvals.keys()))
+        if job_id in _pending_approvals:
+            _approval_results[job_id] = True
+            _pending_approvals[job_id].set()
+            del _pending_approvals[job_id]
+            await query.edit_message_text(f"Approved. Submitting application for job #{job_id}...")
+        else:
+            await query.edit_message_text("No pending approval for this job.")
+
+    elif data.startswith("skip_"):
+        job_id = int(data.split("_", 1)[1])
+        if job_id in _pending_approvals:
+            _approval_results[job_id] = False
+            _pending_approvals[job_id].set()
+            del _pending_approvals[job_id]
+            await query.edit_message_text(f"Skipped application for job #{job_id}.")
+        else:
+            await query.edit_message_text("No pending approval for this job.")
 
 
 def run_bot() -> None:
@@ -911,27 +1352,49 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("analytics", cmd_analytics))
     app.add_handler(CommandHandler("skills", cmd_skills))
     app.add_handler(CommandHandler("calibrate", cmd_calibrate))
+    app.add_handler(CommandHandler("login", cmd_login))
+    app.add_handler(CommandHandler("pause", cmd_pause))
+    app.add_handler(CommandHandler("resume", cmd_resume))
 
     # Action commands
     app.add_handler(CommandHandler("discover", cmd_discover))
     app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("linkedin", cmd_linkedin))
     app.add_handler(CommandHandler("scrape", cmd_scrape))
     app.add_handler(CommandHandler("paste", cmd_paste))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("collect", cmd_collect))
+    app.add_handler(CommandHandler("review", cmd_review))
+    app.add_handler(CommandHandler("approve", cmd_approve))
+    app.add_handler(CommandHandler("reject", cmd_reject))
     app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("apply", cmd_apply))
     app.add_handler(CommandHandler("send", cmd_send))
     app.add_handler(CommandHandler("update", cmd_update_status))
 
-    # Free text: paste mode + approval flow
+    # Inline button callbacks (approval flow)
+    app.add_handler(CallbackQueryHandler(_handle_approval_callback))
+
+    # Free text: paste mode + approval flow (fallback for text replies)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
     logger.info("Telegram bot started")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
+    import sys
+
+    # Ensure both __main__ and src.agent.telegram_bot point to the same module.
+    # Without this, imports from other modules (e.g. computer_use.py) create a
+    # second module instance with separate global state (_pending_approvals, etc.)
+    sys.modules["src.agent.telegram_bot"] = sys.modules["__main__"]
+
     from dotenv import load_dotenv
 
     load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+    from src.logging_config import setup_logging
+
+    setup_logging()
     run_bot()

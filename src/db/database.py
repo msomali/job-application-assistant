@@ -96,7 +96,54 @@ def init_db() -> None:
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_answers_hash ON answers(question_hash);
         CREATE INDEX IF NOT EXISTS idx_answers_category ON answers(category);
+
+        CREATE TABLE IF NOT EXISTS form_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_url TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            action_data TEXT NOT NULL,
+            page_url TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_form_actions_url
+            ON form_actions(job_url, step_index);
+
+        CREATE TABLE IF NOT EXISTS application_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL REFERENCES jobs(id),
+            event_type TEXT NOT NULL,       -- 'submitted', 'failed', 'flagged', 'error', 'skipped'
+            outcome TEXT NOT NULL,          -- 'success', 'failure', 'unknown'
+            reason TEXT,                    -- ATS message or error detail
+            page_url TEXT,                  -- URL at time of event
+            screenshot_path TEXT,           -- confirmation/error screenshot
+            steps_taken INTEGER DEFAULT 0,
+            was_replay INTEGER DEFAULT 0,   -- 1 if action replay, 0 if live
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_app_events_job_id ON application_events(job_id);
+        CREATE INDEX IF NOT EXISTS idx_app_events_type ON application_events(event_type);
     """)
+
+    # Migration: add pause state columns if missing
+    cursor = conn.execute("PRAGMA table_info(applications)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "pause_step" not in columns:
+        conn.executescript("""
+            ALTER TABLE applications ADD COLUMN pause_step INTEGER;
+            ALTER TABLE applications ADD COLUMN pause_messages TEXT;
+            ALTER TABLE applications ADD COLUMN pause_screenshot TEXT;
+        """)
+        logger.info("Migrated applications table: added pause state columns")
+
+    # Migration: add submission outcome columns if missing
+    if "submission_outcome" not in columns:
+        conn.executescript("""
+            ALTER TABLE applications ADD COLUMN submission_outcome TEXT;
+            ALTER TABLE applications ADD COLUMN failure_reason TEXT;
+        """)
+        logger.info("Migrated applications table: added submission_outcome, failure_reason")
+
     conn.commit()
 
     # Migrate: add base_score and penalties columns if missing (existing databases)
@@ -108,6 +155,15 @@ def init_db() -> None:
     conn.commit()
 
     conn.close()
+
+
+def job_exists_by_url(url: str) -> int | None:
+    """Return job_id if URL already exists in DB, else None."""
+    conn = get_connection()
+    url_hash = sha256(url.encode()).hexdigest()[:16]
+    row = conn.execute("SELECT id FROM jobs WHERE url_hash = ?", (url_hash,)).fetchone()
+    conn.close()
+    return row["id"] if row else None
 
 
 def save_job(job_data: dict, url: str, raw_markdown: str | None = None) -> int:
@@ -197,7 +253,8 @@ def save_analysis(job_id: int, analysis: dict) -> int:
 
 _ALLOWED_APP_COLUMNS = frozenset({
     "status", "resume_path", "cover_letter_path", "applied_at", "notes", "updated_at",
-    "job_id",
+    "job_id", "pause_step", "pause_messages", "pause_screenshot",
+    "submission_outcome", "failure_reason",
 })
 
 
@@ -277,6 +334,142 @@ def get_application(job_id: int) -> dict | None:
     return dict(row)
 
 
+def log_application_event(
+    job_id: int,
+    event_type: str,
+    outcome: str,
+    reason: str | None = None,
+    page_url: str | None = None,
+    screenshot_path: str | None = None,
+    steps_taken: int = 0,
+    was_replay: bool = False,
+) -> int:
+    """Log an application submission event (audit trail).
+
+    event_type: 'submitted', 'failed', 'flagged', 'error', 'skipped'
+    outcome: 'success', 'failure', 'unknown'
+    """
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO application_events
+           (job_id, event_type, outcome, reason, page_url, screenshot_path,
+            steps_taken, was_replay)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (job_id, event_type, outcome, reason, page_url, screenshot_path,
+         steps_taken, 1 if was_replay else 0),
+    )
+    event_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info("Logged application event: job=%d type=%s outcome=%s", job_id, event_type, outcome)
+    return event_id
+
+
+def get_application_events(job_id: int) -> list[dict]:
+    """Get all submission events for a job, newest first."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM application_events WHERE job_id = ? ORDER BY created_at DESC",
+        (job_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_pause_state(job_id: int, step: int, messages: list, screenshot: str) -> None:
+    """Save Computer Use loop state for later resumption."""
+    update_application(
+        job_id,
+        status="paused",
+        pause_step=step,
+        pause_messages=json.dumps(messages),
+        pause_screenshot=screenshot,
+    )
+    logger.info("Saved pause state for job %d at step %d", job_id, step)
+
+
+def get_pause_state(job_id: int) -> dict | None:
+    """Load saved pause state. Returns None if not paused."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT pause_step, pause_messages, pause_screenshot FROM applications "
+        "WHERE job_id = ? AND status = 'paused'",
+        (job_id,),
+    ).fetchone()
+    conn.close()
+    if row is None or row["pause_step"] is None:
+        return None
+    return {
+        "step": row["pause_step"],
+        "messages": json.loads(row["pause_messages"]) if row["pause_messages"] else [],
+        "screenshot": row["pause_screenshot"],
+    }
+
+
+def clear_pause_state(job_id: int) -> None:
+    """Clear pause state after successful resume."""
+    update_application(
+        job_id,
+        pause_step=None,
+        pause_messages=None,
+        pause_screenshot=None,
+    )
+    logger.info("Cleared pause state for job %d", job_id)
+
+
+# ---------------------------------------------------------------------------
+# Form action recording (replay cache for Computer Use)
+# ---------------------------------------------------------------------------
+
+
+def save_form_actions(job_url: str, actions: list[dict]) -> None:
+    """Save a sequence of form-filling actions for a job URL.
+
+    Each action is {action_type, action_data, page_url, step_index}.
+    Clears any existing actions for this URL first.
+    """
+    conn = get_connection()
+    conn.execute("DELETE FROM form_actions WHERE job_url = ?", (job_url,))
+    now = datetime.now(UTC).isoformat()
+    for i, act in enumerate(actions):
+        conn.execute(
+            "INSERT INTO form_actions (job_url, step_index, action_type, action_data, page_url, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (job_url, i, act["action_type"], json.dumps(act["action_data"]), act.get("page_url", ""), now),
+        )
+    conn.commit()
+    conn.close()
+    logger.info("Saved %d form actions for %s", len(actions), job_url)
+
+
+def get_form_actions(job_url: str) -> list[dict]:
+    """Load saved form actions for a job URL, ordered by step."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT step_index, action_type, action_data, page_url FROM form_actions "
+        "WHERE job_url = ? ORDER BY step_index",
+        (job_url,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "step_index": r["step_index"],
+            "action_type": r["action_type"],
+            "action_data": json.loads(r["action_data"]),
+            "page_url": r["page_url"],
+        }
+        for r in rows
+    ]
+
+
+def clear_form_actions(job_url: str) -> None:
+    """Delete saved form actions for a URL."""
+    conn = get_connection()
+    conn.execute("DELETE FROM form_actions WHERE job_url = ?", (job_url,))
+    conn.commit()
+    conn.close()
+
+
 def list_jobs(limit: int = 20) -> list[dict]:
     conn = get_connection()
     rows = conn.execute(
@@ -291,6 +484,76 @@ def list_jobs(limit: int = 20) -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_collected_jobs(min_score: int = 0, limit: int = 20) -> list[dict]:
+    """Get jobs in 'collected' status, sorted by fit score."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT j.id, j.title, j.company, j.location,
+           a.fit_score, a.matching_skills, a.gaps, a.tailoring_strategy,
+           app.status
+           FROM jobs j
+           JOIN analyses a ON a.job_id = j.id
+           JOIN applications app ON app.job_id = j.id
+           WHERE app.status = 'collected' AND a.fit_score >= ?
+           ORDER BY a.fit_score DESC
+           LIMIT ?""",
+        (min_score, limit),
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        for field in ("matching_skills", "gaps"):
+            if d.get(field):
+                d[field] = json.loads(d[field])
+        results.append(d)
+    return results
+
+
+def get_uncollected_jobs(min_score: int = 0, limit: int = 50) -> list[dict]:
+    """Get analyzed jobs that haven't been collected yet (status = 'discovered')."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT j.id, j.title, j.company, j.location,
+           a.fit_score, app.status
+           FROM jobs j
+           JOIN analyses a ON a.job_id = j.id
+           LEFT JOIN applications app ON app.job_id = j.id
+           WHERE (app.status = 'discovered' OR app.status IS NULL)
+             AND a.fit_score >= ?
+           ORDER BY a.fit_score DESC
+           LIMIT ?""",
+        (min_score, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def bulk_collect(job_ids: list[int]) -> int:
+    """Mark multiple jobs as collected. Returns count updated."""
+    conn = get_connection()
+    now = datetime.now(UTC).isoformat()
+    count = 0
+    for jid in job_ids:
+        existing = conn.execute(
+            "SELECT id FROM applications WHERE job_id = ?", (jid,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE applications SET status = 'collected', updated_at = ? WHERE job_id = ?",
+                (now, jid),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO applications (job_id, status, updated_at) VALUES (?, 'collected', ?)",
+                (jid, now),
+            )
+        count += 1
+    conn.commit()
+    conn.close()
+    return count
 
 
 def save_job_skills(job_id: int, analysis: dict) -> int:
@@ -572,7 +835,7 @@ def find_answer(question: str) -> dict | None:
     return dict(row) if row else None
 
 
-def find_answer_fuzzy(question: str, threshold: float = 0.75) -> dict | None:
+def find_answer_fuzzy(question: str, threshold: float | None = None) -> dict | None:
     """Look up a cached answer using fuzzy matching.
 
     First tries exact match. If no match, scans all answers and returns
@@ -580,6 +843,10 @@ def find_answer_fuzzy(question: str, threshold: float = 0.75) -> dict | None:
 
     Uses SequenceMatcher for similarity (no external dependency).
     """
+    if threshold is None:
+        from src.config import get as cfg
+        threshold = cfg("matching", "fuzzy_threshold", 0.75)
+
     # Try exact first
     exact = find_answer(question)
     if exact:
@@ -836,6 +1103,7 @@ def get_analytics() -> dict:
         status_counts[r["status"]] = r["cnt"]
 
     # Conversion rates
+    collected = status_counts.get("collected", 0)
     docs_gen = status_counts.get("docs_generated", 0)
     applied = status_counts.get("applied", 0)
     interview = status_counts.get("interview", 0)
@@ -863,6 +1131,7 @@ def get_analytics() -> dict:
     return {
         "total_discovered": total,
         "analyzed": analyzed,
+        "collected": collected,
         "docs_generated": docs_gen,
         "applied": applied,
         "interview": interview,
@@ -871,7 +1140,8 @@ def get_analytics() -> dict:
         "recent_7d": recent,
         "avg_scores_by_status": avg_scores,
         "conversion": {
-            "discover_to_docs": f"{docs_gen}/{total}" if total else "0/0",
+            "discover_to_collected": f"{collected}/{total}" if total else "0/0",
+            "collected_to_docs": f"{docs_gen}/{collected}" if collected else "0/0",
             "docs_to_applied": f"{applied}/{docs_gen}" if docs_gen else "0/0",
             "applied_to_interview": f"{interview}/{applied}" if applied else "0/0",
             "interview_to_offer": f"{offer}/{interview}" if interview else "0/0",

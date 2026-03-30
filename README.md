@@ -79,6 +79,11 @@ job crawl https://company.com/careers --limit 20 --include "/jobs/" --analyze-al
 
 # Run all configured searches and crawls from search_config.json
 job discover --analyze-all
+
+# Same but using Batch API (50% cheaper, results are async)
+job discover --analyze-all --batch
+job batch-status <batch_id>    # Check if batch is done
+job batch-collect <batch_id>   # Save results to database
 ```
 
 ### Browse and Rank

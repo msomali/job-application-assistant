@@ -45,25 +45,10 @@ def _find_pdflatex() -> str:
 
 TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "resume.tex"
 
-RESUME_PROMPT = """\
-You are an expert resume writer. Create a tailored resume for this specific job.
+RESUME_SYSTEM_PROMPT = """\
+You are an expert resume writer. Create a tailored resume for the specified job.
 
-## Job Posting
-Title: {title}
-Company: {company}
-Requirements: {requirements}
-
-## Tailoring Strategy
-{tailoring_strategy}
-
-## Keywords to Emphasize
-{keywords}
-
-## Candidate's Full Profile
-{resume}
-
-## Instructions
-Generate a tailored resume. Write in a natural, human voice as if a real person wrote it.
+Write in a natural, human voice as if a real person wrote it.
 
 IMPORTANT STYLE RULES:
 - Write naturally. Every bullet should read like a person describing their work, not like AI output.
@@ -90,8 +75,7 @@ Return a JSON object with these fields:
   - "name": project name
   - "description": 1-2 sentence description highlighting relevance to the role
 
-Return ONLY valid JSON, no markdown fences.
-"""
+Return ONLY valid JSON, no markdown fences."""
 
 
 @retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(APIError, APITimeoutError, RateLimitError))
@@ -116,19 +100,40 @@ def generate_resume_content(
         resume_for_llm = guard.redact_dict(master_resume)
         logger.info("PII redacted: %d fields protected", guard.field_count)
 
-    prompt = RESUME_PROMPT.format(
-        title=job.title,
-        company=job.company,
-        requirements="\n".join(f"- {r}" for r in job.requirements),
-        tailoring_strategy=analysis.tailoring_strategy,
-        keywords=", ".join(analysis.keywords),
-        resume=json.dumps(resume_for_llm, indent=2),
-    )
+    requirements_text = "\n".join(f"- {r}" for r in job.requirements)
+    keywords_text = ", ".join(analysis.keywords)
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3000,
-        messages=[{"role": "user", "content": prompt}],
+        system=[
+            {
+                "type": "text",
+                "text": RESUME_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"## Candidate's Full Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}",
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
+                            f"Requirements:\n{requirements_text}\n\n"
+                            f"## Tailoring Strategy\n{analysis.tailoring_strategy}\n\n"
+                            f"## Keywords to Emphasize\n{keywords_text}"
+                        ),
+                    },
+                ],
+            }
+        ],
     )
 
     response_text = message.content[0].text

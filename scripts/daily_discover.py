@@ -19,7 +19,8 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 from src.analyzer.job_analyzer import analyze_job
-from src.db.database import init_db, list_jobs, save_analysis, save_job
+from src.config import get as cfg
+from src.db.database import bulk_collect, init_db, save_analysis, save_job
 from src.models import JobPosting
 from src.scraper.firecrawl_client import _extract_with_claude
 from src.scraper.job_discovery import discover_all
@@ -60,18 +61,28 @@ async def main():
         })
         logger.info("[%d] %s at %s - Score: %d", job_id, job.title, job.company, analysis.fit_score)
 
-    # Send Telegram digest
+    # Auto-collect jobs above threshold and send digest
     if new_jobs:
+        min_score = cfg("scoring", "min_score_notify", 70)
+        collectible = [j for j in new_jobs if j["fit_score"] >= min_score]
+        if collectible:
+            bulk_collect([j["id"] for j in collectible])
+            logger.info("Auto-collected %d jobs with score >= %d", len(collectible), min_score)
+
         try:
             from src.agent.telegram_bot import send_notification
 
-            top = sorted(new_jobs, key=lambda j: j["fit_score"], reverse=True)[:5]
+            digest_limit = cfg("telegram", "daily_digest_limit", 5)
+            top = sorted(new_jobs, key=lambda j: j["fit_score"], reverse=True)[:digest_limit]
             lines = ["*Daily Job Digest:*\n"]
             for j in top:
+                status = "collected" if j["fit_score"] >= min_score else "discovered"
                 lines.append(
-                    f"`{j['id']:>3}` | {j['fit_score']:>3}% | {j['title'][:25]} @ {j['company'][:15]} ({j['location'][:15]})"
+                    f"`{j['id']:>3}` | {j['fit_score']:>3}% | {status:<10} | "
+                    f"{j['title'][:25]} @ {j['company'][:15]}"
                 )
-            lines.append(f"\n{len(new_jobs)} new jobs found. Use /job <id> for details.")
+            lines.append(f"\n{len(new_jobs)} new, {len(collectible)} collected.")
+            lines.append("Use /review to see collected jobs, /approve <ids> to generate docs.")
             await send_notification("\n".join(lines))
             logger.info("Telegram digest sent")
         except Exception as e:

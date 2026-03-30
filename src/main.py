@@ -18,11 +18,13 @@ logger = logging.getLogger(__name__)
 import click
 
 from src.analyzer.job_analyzer import analyze_job, load_master_resume
+from src.config import get as cfg
 from src.db.database import (
     delete_answer,
     find_answer_fuzzy,
     get_analysis,
     get_answer_stats,
+    get_application,
     get_job,
     get_score_calibration,
     get_skill_gaps,
@@ -31,6 +33,7 @@ from src.db.database import (
     get_skill_trend,
     import_screening_answers,
     init_db,
+    job_exists_by_url,
     list_answers,
     list_jobs,
     save_analysis,
@@ -52,7 +55,7 @@ from src.scraper.job_discovery import (
     search_jobs,
 )
 
-OUTPUT_DIR = Path(__file__).parent.parent / "output"
+OUTPUT_DIR = Path(__file__).parent.parent / (cfg("generation", "output_dir") or "output")
 
 
 def _validate_url(url: str) -> str:
@@ -195,7 +198,7 @@ def list_cmd(limit: int):
 
 @cli.command()
 @click.argument("query")
-@click.option("--limit", default=5, help="Number of results per query")
+@click.option("--limit", default=cfg("discovery", "search_limit", 5), help="Number of results per query")
 @click.option("--analyze-all", is_flag=True, help="Analyze all discovered jobs")
 def search(query: str, limit: int, analyze_all: bool):
     """Search the web for jobs matching a query."""
@@ -232,9 +235,59 @@ def search(query: str, limit: int, analyze_all: bool):
     click.echo("Done!")
 
 
+@cli.command("search-linkedin")
+@click.argument("query")
+@click.option("--limit", default=25, help="Number of results")
+@click.option("--analyze-all", is_flag=True, help="Analyze all discovered jobs")
+def search_linkedin(query: str, limit: int, analyze_all: bool):
+    """Search LinkedIn directly for jobs (requires saved LinkedIn session)."""
+    from src.scraper.linkedin import search_linkedin as _search_linkedin
+
+    click.echo(f"Searching LinkedIn: {query}")
+
+    try:
+        results = _search_linkedin(query, limit=limit)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}")
+        return
+
+    click.echo(f"Found {len(results)} LinkedIn jobs")
+
+    for result in results:
+        url = result["url"]
+        click.echo(f"  Scraping: {result.get('title', url)}")
+
+        try:
+            from src.scraper.linkedin import scrape_linkedin_job
+            markdown = scrape_linkedin_job(url)
+        except Exception as e:
+            click.echo(f"  Skipping (scrape error): {e}")
+            continue
+
+        if not markdown:
+            continue
+
+        try:
+            extracted = _extract_with_claude(markdown)
+            job = JobPosting(**extracted)
+        except Exception as e:
+            click.echo(f"  Skipping (parse error): {e}")
+            continue
+
+        job_id = save_job(job.model_dump(), url, markdown)
+        click.echo(f"  [{job_id}] {job.title} at {job.company} ({job.location})")
+
+        if analyze_all:
+            analysis = analyze_job(job)
+            save_analysis(job_id, analysis.model_dump())
+            click.echo(f"       Fit: {analysis.fit_score}/100")
+
+    click.echo("Done!")
+
+
 @cli.command()
 @click.argument("url")
-@click.option("--limit", default=20, help="Max pages to crawl")
+@click.option("--limit", default=cfg("discovery", "crawl_limit", 20), help="Max pages to crawl")
 @click.option("--include", multiple=True, help="URL path patterns to include")
 @click.option("--analyze-all", is_flag=True, help="Analyze all discovered jobs")
 def crawl(url: str, limit: int, include: tuple, analyze_all: bool):
@@ -274,7 +327,8 @@ def crawl(url: str, limit: int, include: tuple, analyze_all: bool):
 
 @cli.command()
 @click.option("--analyze-all", is_flag=True, help="Analyze all discovered jobs")
-def discover(analyze_all: bool):
+@click.option("--batch", is_flag=True, help="Use Batch API for analysis (50%% cheaper, async)")
+def discover(analyze_all: bool, batch: bool):
     """Run all configured searches and crawls from search_config.json."""
     click.echo("Running full job discovery...")
     logger.info("Starting full job discovery")
@@ -283,11 +337,19 @@ def discover(analyze_all: bool):
     logger.info("Discovered %d unique job pages", len(results))
 
     processed = 0
+    pending_jobs = []  # For batch mode: (job_id, JobPosting)
+
     for result in results:
         url = result["url"]
         markdown = result.get("markdown", "")
 
         if not markdown.strip():
+            continue
+
+        # Skip already-known jobs
+        existing_id = job_exists_by_url(url)
+        if existing_id:
+            click.echo(f"  Skipping (already tracked as #{existing_id}): {url}")
             continue
 
         try:
@@ -302,16 +364,28 @@ def discover(analyze_all: bool):
         click.echo(f"  [{job_id}] {job.title} at {job.company} ({job.location})")
         processed += 1
 
-        if analyze_all:
+        if analyze_all and batch:
+            pending_jobs.append((job_id, job))
+        elif analyze_all:
             analysis = analyze_job(job)
             save_analysis(job_id, analysis.model_dump())
             click.echo(f"       Fit: {analysis.fit_score}/100")
 
-    click.echo(f"\nProcessed {processed} jobs. Run 'list' to see results.")
+    # Submit batch if we have pending jobs
+    if pending_jobs:
+        from src.batch import batch_analyze_jobs
+
+        click.echo(f"\nSubmitting {len(pending_jobs)} jobs to Batch API (50% cheaper)...")
+        batch_id = batch_analyze_jobs(pending_jobs)
+        click.echo(f"Batch submitted: {batch_id}")
+        click.echo(f"Check status with: job batch-status {batch_id}")
+        click.echo("Results typically ready within a few minutes to a few hours.")
+    else:
+        click.echo(f"\nProcessed {processed} jobs. Run 'list' to see results.")
 
 
 @cli.command()
-@click.option("--min-score", default=60, help="Minimum fit score to show")
+@click.option("--min-score", default=cfg("scoring", "min_score_rank", 60), help="Minimum fit score to show")
 @click.option("--limit", default=20, help="Number of jobs to show")
 def rank(min_score: int, limit: int):
     """Show jobs ranked by fit score, filtered by minimum score."""
@@ -332,6 +406,102 @@ def rank(min_score: int, limit: int):
             f"{j['id']:>4}  {j['fit_score']:>5}  {status:<15}  "
             f"{j['title'][:30]:<30}  {j['company'][:20]:<20}"
         )
+
+
+@cli.command()
+@click.option("--min-score", default=cfg("scoring", "min_score_rank", 60), help="Minimum fit score")
+@click.option("--limit", default=20, help="Max jobs to collect")
+def collect(min_score: int, limit: int):
+    """Shortlist top-scored jobs for review before generating docs or applying."""
+    from src.db.database import bulk_collect, get_uncollected_jobs
+
+    uncollected = get_uncollected_jobs(min_score=min_score, limit=limit)
+    if not uncollected:
+        click.echo(f"No uncollected jobs with score >= {min_score}. Run 'discover --analyze-all' first.")
+        return
+
+    job_ids = [j["id"] for j in uncollected]
+    count = bulk_collect(job_ids)
+
+    click.echo(f"Collected {count} jobs (score >= {min_score}):\n")
+    click.echo(f"{'ID':>4}  {'Score':>5}  {'Title':<30}  {'Company':<20}")
+    click.echo("-" * 65)
+    for j in uncollected:
+        click.echo(
+            f"{j['id']:>4}  {j['fit_score']:>5}  "
+            f"{j['title'][:30]:<30}  {j['company'][:20]:<20}"
+        )
+    click.echo("\nUse 'job review' to see details, 'job approve <ids>' to generate docs.")
+
+
+@cli.command()
+@click.option("--min-score", default=0, help="Minimum fit score to show")
+def review(min_score: int):
+    """Review collected jobs — see details before approving or rejecting."""
+    from src.db.database import get_collected_jobs
+
+    jobs = get_collected_jobs(min_score=min_score)
+    if not jobs:
+        click.echo("No collected jobs to review. Run 'collect' first.")
+        return
+
+    for j in jobs:
+        skills = ", ".join(j.get("matching_skills", [])[:5])
+        gaps = ", ".join(j.get("gaps", [])[:3])
+        click.echo(f"\n{'=' * 70}")
+        click.echo(f"[#{j['id']}] {j['title']} at {j['company']} ({j['location']})")
+        click.echo(f"  Score: {j['fit_score']}  |  Skills: {skills}")
+        if gaps:
+            click.echo(f"  Gaps: {gaps}")
+        strategy = j.get("tailoring_strategy", "")
+        if strategy:
+            click.echo(f"  Strategy: {strategy[:100]}")
+
+    click.echo(f"\n{'=' * 70}")
+    click.echo(f"\n{len(jobs)} jobs in review. Commands:")
+    click.echo("  job approve 1 2 3    — Generate docs for these jobs")
+    click.echo("  job reject 4 5       — Skip these jobs")
+
+
+@cli.command()
+@click.argument("job_ids", nargs=-1, type=int, required=True)
+def approve(job_ids: tuple[int, ...]):
+    """Approve collected jobs — generates resume + cover letter for each."""
+    master_resume = load_master_resume()
+
+    for jid in job_ids:
+        job_data = get_job(jid)
+        if not job_data:
+            click.echo(f"Job {jid} not found, skipping.")
+            continue
+
+        app_data = get_application(jid)
+        if app_data and app_data.get("status") not in ("collected", "discovered"):
+            click.echo(f"Job {jid} is already '{app_data['status']}', skipping.")
+            continue
+
+        click.echo(f"\nGenerating docs for #{jid}: {job_data['title']} at {job_data['company']}")
+        analysis_data = get_analysis(jid)
+        if not analysis_data:
+            click.echo(f"  No analysis for job {jid}, skipping.")
+            continue
+
+        try:
+            job = JobPosting(**{k: job_data[k] for k in JobPosting.model_fields if k in job_data})
+            analysis = JobAnalysis(**{k: analysis_data[k] for k in JobAnalysis.model_fields if k in analysis_data})
+            _generate_docs(job, analysis, master_resume, jid)
+            click.echo(f"  Docs generated. Ready for 'job apply {jid}'.")
+        except Exception as e:
+            click.echo(f"  Error: {e}")
+
+
+@cli.command()
+@click.argument("job_ids", nargs=-1, type=int, required=True)
+def reject(job_ids: tuple[int, ...]):
+    """Reject collected jobs — marks them as rejected."""
+    for jid in job_ids:
+        update_application(jid, status="rejected")
+        click.echo(f"Rejected job #{jid}")
 
 
 @cli.group()
@@ -553,8 +723,8 @@ def calibrate():
 
 
 @cli.command("batch-generate")
-@click.option("--min-score", default=70, help="Generate docs for jobs above this score")
-@click.option("--limit", default=5, help="Max jobs to generate for")
+@click.option("--min-score", default=cfg("scoring", "min_score_generate", 70), help="Generate docs for jobs above this score")
+@click.option("--limit", default=cfg("generation", "batch_limit", 5), help="Max jobs to generate for")
 def batch_generate(min_score: int, limit: int):
     """Generate resume + cover letter for top-ranked jobs."""
     jobs = list_jobs(limit=100)
@@ -588,6 +758,54 @@ def batch_generate(min_score: int, limit: int):
     click.echo(f"\nGenerated docs for {len(ranked)} jobs.")
 
 
+@cli.command("batch-status")
+@click.argument("batch_id")
+def batch_status_cmd(batch_id: str):
+    """Check the status of a batch analysis job."""
+    from src.batch import get_batch_status
+
+    status = get_batch_status(batch_id)
+    click.echo(f"\nBatch: {status['id']}")
+    click.echo(f"Status: {status['processing_status']}")
+    counts = status["request_counts"]
+    click.echo(
+        f"Requests: {counts['succeeded']} succeeded, "
+        f"{counts['processing']} processing, "
+        f"{counts['errored']} errored"
+    )
+    if status["ended_at"]:
+        click.echo(f"Completed: {status['ended_at']}")
+        click.echo(f"\nRun 'job batch-collect {batch_id}' to save results.")
+
+
+@cli.command("batch-collect")
+@click.argument("batch_id")
+def batch_collect_cmd(batch_id: str):
+    """Collect results from a completed batch and save analyses to the database."""
+    from src.batch import poll_batch
+
+    click.echo(f"Collecting results for batch {batch_id}...")
+    results = poll_batch(batch_id, poll_interval=5, timeout=60)
+
+    if not results:
+        click.echo("No results found. The batch may still be processing.")
+        click.echo(f"Check status with: job batch-status {batch_id}")
+        return
+
+    saved = 0
+    for job_id, analysis_data in results.items():
+        if analysis_data is None:
+            click.echo(f"  [{job_id}] Failed")
+            continue
+
+        save_analysis(job_id, analysis_data)
+        score = analysis_data.get("fit_score", "?")
+        click.echo(f"  [{job_id}] Fit: {score}/100")
+        saved += 1
+
+    click.echo(f"\nSaved {saved} analyses. Run 'job list' to see results.")
+
+
 def _generate_docs(
     job: JobPosting, analysis: JobAnalysis, master_resume: dict, job_id: int,
     *, redact: bool = True,
@@ -617,7 +835,8 @@ def _generate_docs(
 @cli.command()
 @click.argument("job_id", type=int)
 @click.option("--headless", is_flag=True, help="Run browser without visible window")
-def apply(job_id: int, headless: bool):
+@click.option("--resume", "resume_paused", is_flag=True, help="Resume a previously paused application")
+def apply(job_id: int, headless: bool, resume_paused: bool):
     """Fill out and submit a job application using browser automation."""
     import asyncio
 
@@ -636,6 +855,10 @@ def apply(job_id: int, headless: bool):
         click.echo(f"No documents for job {job_id}. Run 'generate {job_id}' first.")
         return
 
+    if resume_paused and app_data.get("status") != "paused":
+        click.echo(f"Job {job_id} is not paused (status: {app_data.get('status')}). Cannot resume.")
+        return
+
     application_url = job_data.get("application_url") or job_data.get("url", "")
     if not application_url:
         click.echo(f"No application URL for job {job_id}.")
@@ -643,7 +866,10 @@ def apply(job_id: int, headless: bool):
 
     master_resume = load_master_resume()
 
-    click.echo(f"Opening application for: {job_data['title']} at {job_data['company']}")
+    if resume_paused:
+        click.echo(f"Resuming application for: {job_data['title']} at {job_data['company']}")
+    else:
+        click.echo(f"Opening application for: {job_data['title']} at {job_data['company']}")
     click.echo(f"URL: {application_url}")
     logger.info("Starting application for job ID %d at %s", job_id, application_url)
 
@@ -655,6 +881,7 @@ def apply(job_id: int, headless: bool):
             cover_letter_path=app_data.get("cover_letter_path", ""),
             job_id=job_id,
             headless=headless,
+            resume=resume_paused,
         )
     )
 
@@ -666,6 +893,75 @@ def apply(job_id: int, headless: bool):
         update_application(job_id, status="applied")
         click.echo("Application submitted successfully!")
         logger.info("Application submitted for job ID: %d", job_id)
+    elif result["status"] == "paused":
+        click.echo("Application paused. Resume later with: job apply --resume " + str(job_id))
+
+
+@cli.command()
+@click.argument("job_id", type=int)
+def pause(job_id: int):
+    """Signal a running application to pause at the next step."""
+    from src.agent.computer_use import request_pause
+
+    request_pause(job_id)
+    click.echo(f"Pause signal sent for job {job_id}. Application will pause after the current step.")
+
+
+@cli.command()
+@click.option(
+    "--site",
+    type=click.Choice(["linkedin", "indeed", "default"]),
+    default="default",
+    help="Which site to save login session for",
+)
+def login(site: str):
+    """Launch a browser to log in and save session for reuse.
+
+    Opens a visible browser window. Log into the site manually,
+    then close the browser window. Session is saved automatically.
+    """
+    import asyncio
+
+    from src.scraper.browser_session import session_path
+
+    async def _login_session():
+        from playwright.async_api import async_playwright
+
+        urls = {
+            "linkedin": "https://www.linkedin.com/login",
+            "indeed": "https://secure.indeed.com/auth",
+            "default": "about:blank",
+        }
+
+        click.echo(f"Opening browser for {site} login...")
+        click.echo("Log in manually, then close the browser window to save your session.")
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=False)
+            ctx = await browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            )
+            page = await ctx.new_page()
+            await page.goto(urls[site])
+
+            # Wait for user to close the browser
+            try:
+                await page.wait_for_event("close", timeout=300000)  # 5 min timeout
+            except Exception:
+                pass
+
+            # Save session state
+            path = session_path(site)
+            await ctx.storage_state(path=str(path))
+            click.echo(f"Session saved to {path}")
+            await browser.close()
+
+    asyncio.run(_login_session())
 
 
 if __name__ == "__main__":

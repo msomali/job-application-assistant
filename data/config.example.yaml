@@ -1,0 +1,35 @@
+# Job Application Assistant — Configuration
+# Copy this file to data/config.yaml and customize to your preferences.
+# Any setting you omit will use the default value shown below.
+
+# --- Scoring Thresholds ---
+# Controls which jobs are shown, generated, or notified about based on fit score (0-100).
+scoring:
+  min_score_rank: 60          # Minimum fit score to show in 'job rank' (default: 60)
+  min_score_generate: 70      # Minimum score for 'job batch-generate' (default: 70)
+  min_score_notify: 70        # Minimum score for Telegram top match notifications (default: 70)
+
+# --- Job Discovery ---
+# Controls how many results are fetched when searching or crawling for jobs.
+discovery:
+  search_limit: 5             # Number of results per search query (default: 5)
+  crawl_limit: 20             # Max pages to crawl per career page (default: 20)
+  skip_domains:               # Domains to skip in search results (default: major aggregators)
+    - linkedin.com
+    - indeed.com
+    - glassdoor.com
+    - ziprecruiter.com
+
+# --- Document Generation ---
+generation:
+  batch_limit: 5              # Max jobs for 'job batch-generate' (default: 5)
+  output_dir: output/         # Directory for generated PDFs (default: output/)
+
+# --- Telegram Bot ---
+telegram:
+  daily_digest_limit: 5       # Number of top jobs in the daily digest message (default: 5)
+
+# --- Answer Matching ---
+# Controls how screening question answers are matched from the cache.
+matching:
+  fuzzy_threshold: 0.75       # Similarity threshold for fuzzy answer matching, 0.0-1.0 (default: 0.75)
