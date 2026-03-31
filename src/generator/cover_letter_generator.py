@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -108,7 +109,10 @@ def generate_cover_letter_content(
         ],
     )
 
-    response_text = message.content[0].text
+    response_text = message.content[0].text.strip()
+    # Strip markdown code fences if present
+    response_text = re.sub(r"^\s*```(?:json)?\s*", "", response_text)
+    response_text = re.sub(r"\s*```\s*$", "", response_text)
     if guard:
         response_text = guard.restore(response_text)
 

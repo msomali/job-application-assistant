@@ -149,7 +149,8 @@ def analyze(job_id: int):
 
 @cli.command()
 @click.argument("job_id", type=int)
-def generate(job_id: int):
+@click.option("--pages", default=1, help="Target page count for resume (default: 1)")
+def generate(job_id: int, pages: int):
     """Re-generate resume and cover letter for a stored job."""
     job_data = get_job(job_id)
     if not job_data:
@@ -167,9 +168,9 @@ def generate(job_id: int):
     analysis = JobAnalysis(**analysis_data)
     master_resume = load_master_resume()
 
-    click.echo(f"Generating docs for: {job.title} at {job.company}")
+    click.echo(f"Generating {pages}-page docs for: {job.title} at {job.company}")
     logger.info("Generating docs for job ID %d: %s at %s", job_id, job.title, job.company)
-    _generate_docs(job, analysis, master_resume, job_id)
+    _generate_docs(job, analysis, master_resume, job_id, pages=pages)
 
     update_application(job_id, status="docs_generated")
     click.echo("Done!")
@@ -808,15 +809,15 @@ def batch_collect_cmd(batch_id: str):
 
 def _generate_docs(
     job: JobPosting, analysis: JobAnalysis, master_resume: dict, job_id: int,
-    *, redact: bool = True,
+    *, redact: bool = True, pages: int = 1,
 ) -> None:
     """Generate resume and cover letter PDFs."""
     slug = _slugify(f"{job.company}-{job.title}")
     date_str = datetime.now(UTC).strftime("%Y%m%d")
     output_dir = OUTPUT_DIR / f"{slug}_{date_str}_{job_id}"
 
-    resume_content = generate_resume_content(job, analysis, master_resume, redact=redact)
-    resume_pdf = render_resume(resume_content, master_resume, output_dir)
+    resume_content = generate_resume_content(job, analysis, master_resume, redact=redact, pages=pages)
+    resume_pdf = render_resume(resume_content, master_resume, output_dir, pages=pages)
     click.echo(f"  → Resume: {resume_pdf}")
     logger.info("Resume generated: %s", resume_pdf)
 

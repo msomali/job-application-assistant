@@ -41,15 +41,21 @@ async def _create_linkedin_context(playwright):
             "No LinkedIn session found. Run 'job login --site linkedin' first."
         )
 
-    browser = await playwright.chromium.launch(headless=True)
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=["--disable-blink-features=AutomationControlled"],
+    )
     context = await browser.new_context(
         storage_state=str(session_path("linkedin")),
         viewport={"width": 1280, "height": 800},
         user_agent=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/131.0.0.0 Safari/537.36"
         ),
+    )
+    await context.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
     return browser, context
 
@@ -58,29 +64,64 @@ async def _extract_job_cards(page: Page, limit: int) -> list[dict]:
     """Extract job card data from LinkedIn search results page."""
     jobs = []
 
-    # Wait for job cards to load
-    try:
-        await page.wait_for_selector(
-            SELECTORS["job_cards"], timeout=10000
-        )
-    except Exception:
+    # Try multiple selectors — LinkedIn changes DOM frequently
+    card_selectors = [
+        SELECTORS["job_cards"],  # li.jobs-search-results__list-item
+        "div.job-card-container",
+        "li[data-occludable-job-id]",
+        "ul.jobs-search__results-list > li",
+        "div.jobs-search-results-list li",
+    ]
+
+    cards = []
+    for selector in card_selectors:
+        try:
+            await page.wait_for_selector(selector, timeout=5000)
+            cards = await page.query_selector_all(selector)
+            if cards:
+                logger.debug("Found %d cards with selector: %s", len(cards), selector)
+                break
+        except Exception:
+            continue
+
+    if not cards:
         # Try scrolling to trigger lazy load
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await asyncio.sleep(2)
-        try:
-            await page.wait_for_selector(SELECTORS["job_cards"], timeout=5000)
-        except Exception:
-            logger.warning("No job cards found on page")
-            return jobs
+        for selector in card_selectors:
+            try:
+                cards = await page.query_selector_all(selector)
+                if cards:
+                    break
+            except Exception:
+                continue
 
-    cards = await page.query_selector_all(SELECTORS["job_cards"])
+    if not cards:
+        # Last resort: dump page content for debugging
+        html = await page.content()
+        logger.warning("No job cards found. Page length: %d, snippet: %s", len(html), html[:500])
+        return jobs
 
     for card in cards[:limit]:
         try:
-            title_el = await card.query_selector(SELECTORS["job_title"])
-            company_el = await card.query_selector(SELECTORS["job_company"])
-            location_el = await card.query_selector(SELECTORS["job_location"])
-            link_el = await card.query_selector(SELECTORS["job_link"])
+            # Try multiple selectors for each field
+            title_el = (
+                await card.query_selector(SELECTORS["job_title"])
+                or await card.query_selector("a[class*='title']")
+                or await card.query_selector("h3 a")
+                or await card.query_selector("a[href*='/jobs/view/']")
+            )
+            company_el = (
+                await card.query_selector(SELECTORS["job_company"])
+                or await card.query_selector("h4 a")
+                or await card.query_selector("span[class*='company']")
+            )
+            location_el = (
+                await card.query_selector(SELECTORS["job_location"])
+                or await card.query_selector("span[class*='location']")
+                or await card.query_selector("li[class*='metadata']")
+            )
+            link_el = title_el or await card.query_selector("a[href*='/jobs/view/']")
 
             title = (await title_el.inner_text()).strip() if title_el else ""
             company = (await company_el.inner_text()).strip() if company_el else ""
@@ -120,14 +161,19 @@ async def _async_search_linkedin(query: str, limit: int = 25) -> list[dict]:
 
         try:
             logger.info("Searching LinkedIn: %s", query)
-            await page.goto(search_url, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(2)  # Let results settle
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)  # Let results render
 
             # Check if we're redirected to login
-            if "/login" in page.url or "/authwall" in page.url:
+            current_url = page.url
+            if "/login" in current_url or "/authwall" in current_url:
                 raise RuntimeError(
                     "LinkedIn session expired. Run 'job login --site linkedin' to re-authenticate."
                 )
+
+            # Debug: log page state
+            page_title = await page.title()
+            logger.debug("LinkedIn page title: %s, URL: %s", page_title, current_url)
 
             jobs = await _extract_job_cards(page, limit)
             logger.info("Found %d LinkedIn jobs for: %s", len(jobs), query)
@@ -155,7 +201,7 @@ async def _async_scrape_linkedin_job(url: str) -> str:
 
         try:
             logger.info("Scraping LinkedIn job: %s", url)
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(2)
 
             # Check for auth wall
@@ -222,6 +268,18 @@ async def _async_scrape_linkedin_job(url: str) -> str:
             await browser.close()
 
 
+def _run_async(coro):
+    """Run a coroutine, handling both sync and async contexts."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Already in an event loop (e.g., Telegram bot) — create a task
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return loop.run_in_executor(pool, asyncio.run, coro)
+
+
 def search_linkedin(query: str, limit: int = 25) -> list[dict]:
     """Search LinkedIn jobs via Playwright.
 
@@ -230,7 +288,15 @@ def search_linkedin(query: str, limit: int = 25) -> list[dict]:
 
     Requires saved LinkedIn session via `job login --site linkedin`.
     """
-    return asyncio.run(_async_search_linkedin(query, limit))
+    result = _run_async(_async_search_linkedin(query, limit))
+    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
+        raise RuntimeError("Cannot call sync search_linkedin from async context. Use await search_linkedin_async().")
+    return result
+
+
+async def search_linkedin_async(query: str, limit: int = 25) -> list[dict]:
+    """Async version of search_linkedin for use in event loops."""
+    return await asyncio.to_thread(asyncio.run, _async_search_linkedin(query, limit))
 
 
 def scrape_linkedin_job(url: str) -> str:
@@ -239,4 +305,12 @@ def scrape_linkedin_job(url: str) -> str:
     Returns markdown string of job content.
     (Same format as job_discovery.scrape_search_result)
     """
-    return asyncio.run(_async_scrape_linkedin_job(url))
+    result = _run_async(_async_scrape_linkedin_job(url))
+    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
+        raise RuntimeError("Cannot call sync scrape_linkedin_job from async context. Use await scrape_linkedin_job_async().")
+    return result
+
+
+async def scrape_linkedin_job_async(url: str) -> str:
+    """Async version of scrape_linkedin_job for use in event loops."""
+    return await asyncio.to_thread(asyncio.run, _async_scrape_linkedin_job(url))

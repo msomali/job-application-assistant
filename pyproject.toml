@@ -28,6 +28,9 @@ dev = [
 [project.scripts]
 job = "src.main:cli"
 
+[tool.setuptools.packages.find]
+where = ["."]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"

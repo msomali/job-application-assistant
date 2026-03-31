@@ -486,9 +486,9 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from src.analyzer.job_analyzer import analyze_job
         from src.scraper.firecrawl_client import _extract_with_claude
-        from src.scraper.linkedin import scrape_linkedin_job, search_linkedin
+        from src.scraper.linkedin import scrape_linkedin_job_async, search_linkedin_async
 
-        results = search_linkedin(query_str, limit=10)
+        results = await search_linkedin_async(query_str, limit=10)
         if not results:
             await update.message.reply_text("No LinkedIn jobs found.")
             return
@@ -497,7 +497,7 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for result in results:
             url = result["url"]
             try:
-                markdown = scrape_linkedin_job(url)
+                markdown = await scrape_linkedin_job_async(url)
                 if not markdown:
                     continue
                 extracted = _extract_with_claude(markdown)
@@ -652,7 +652,7 @@ async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update):
         return
     if not context.args:
-        await update.message.reply_text("Usage: /generate <job_id>")
+        await update.message.reply_text("Usage: /generate <job_id> [pages]")
         return
 
     try:
@@ -660,6 +660,14 @@ async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Invalid job ID.")
         return
+
+    # Optional pages argument (default 1)
+    pages = 1
+    if len(context.args) > 1:
+        try:
+            pages = max(1, min(3, int(context.args[1])))
+        except ValueError:
+            pass
 
     init_db()
     job_data = get_job(job_id)
@@ -693,8 +701,8 @@ async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_str = datetime.now(UTC).strftime("%Y%m%d")
         output_dir = OUTPUT_DIR / f"{slug}_{date_str}_{job_id}"
 
-        resume_content = generate_resume_content(job, analysis, master_resume)
-        resume_pdf = render_resume(resume_content, master_resume, output_dir)
+        resume_content = generate_resume_content(job, analysis, master_resume, pages=pages)
+        resume_pdf = render_resume(resume_content, master_resume, output_dir, pages=pages)
         update_application(job_id, resume_path=str(resume_pdf))
 
         cover_letter_content = generate_cover_letter_content(job, analysis, master_resume)
