@@ -559,7 +559,7 @@ def skills_trends(days: int):
         click.echo(f"\nNo rising skill trends yet (need jobs scraped across {days}+ day span).")
 
     if trend["established"]:
-        click.echo(f"\n  Established Skills (consistently in demand)")
+        click.echo("\n  Established Skills (consistently in demand)")
         click.echo(f"  {'─' * 55}")
         click.echo(f"  {'Skill':<35}  {'Recent':>7}  {'Older':>7}")
         for s in trend["established"]:
@@ -578,12 +578,12 @@ def skills_gaps(limit: int):
         click.echo("No skill gaps found — either you have everything or no data yet.")
         return
 
-    click.echo(f"\n  Skills the market wants that you don't list")
+    click.echo("\n  Skills the market wants that you don't list")
     click.echo(f"  {'─' * 50}")
     click.echo(f"  {'Skill':<35}  {'Jobs Requiring':>14}")
     for g in gaps:
         click.echo(f"  {g['skill']:<35}  {g['job_count']:>14}")
-    click.echo(f"\n  Tip: Consider adding these to your master_resume.json if you have them.")
+    click.echo("\n  Tip: Consider adding these to your master_resume.json if you have them.")
 
 
 @cli.group()
@@ -663,23 +663,23 @@ def answers_import():
 def answers_stats():
     """Show answer cache statistics."""
     stats = get_answer_stats()
-    click.echo(f"\nAnswer Cache Statistics:")
+    click.echo("\nAnswer Cache Statistics:")
     click.echo(f"  Total answers: {stats['total_answers']}")
     click.echo(f"  Total lookups: {stats['total_lookups']}")
     click.echo(f"  Never used:    {stats['never_used']}")
 
     if stats["by_source"]:
-        click.echo(f"\n  By Source:")
+        click.echo("\n  By Source:")
         for src, cnt in stats["by_source"].items():
             click.echo(f"    {src}: {cnt}")
 
     if stats["by_category"]:
-        click.echo(f"\n  By Category:")
+        click.echo("\n  By Category:")
         for cat, cnt in stats["by_category"].items():
             click.echo(f"    {cat}: {cnt}")
 
     if stats["most_used"]:
-        click.echo(f"\n  Most Used:")
+        click.echo("\n  Most Used:")
         for a in stats["most_used"]:
             click.echo(f"    [{a['times_used']}x] {a['question'][:40]} -> {a['answer'][:30]}")
 
@@ -697,7 +697,7 @@ def calibrate():
     click.echo("\nScore Calibration Report")
     click.echo("=" * 60)
 
-    click.echo(f"\n  Average Fit Score by Outcome:")
+    click.echo("\n  Average Fit Score by Outcome:")
     click.echo(f"  {'Status':<15}  {'Avg Score':>9}  {'Count':>5}  {'Range'}")
     click.echo(f"  {'─' * 55}")
     for status, data in cal["avg_by_status"].items():
@@ -713,7 +713,7 @@ def calibrate():
         click.echo("\n  Need both 'rejected' and 'interview' outcomes to calculate threshold.")
 
     if any(cal["penalty_analysis"].values()):
-        click.echo(f"\n  Penalty Analysis:")
+        click.echo("\n  Penalty Analysis:")
         for bucket, rules in cal["penalty_analysis"].items():
             if rules:
                 click.echo(f"    {bucket.title()} applications:")
@@ -963,6 +963,86 @@ def login(site: str):
             await browser.close()
 
     asyncio.run(_login_session())
+
+
+@cli.command()
+@click.argument("job_id", type=int)
+def enrich(job_id: int):
+    """Enrich a job's company data using Google Search grounding.
+
+    Requires GOOGLE_API_KEY in .env. Uses Gemini with Google Search
+    grounding to fetch company size, industry, news, tech stack, etc.
+    """
+    from src.db.database import get_job
+    from src.llm import get_router, parse_json_response
+    from src.models import CompanyEnrichment
+
+    job_row = get_job(job_id)
+    if not job_row:
+        click.echo(f"Job {job_id} not found.", err=True)
+        raise SystemExit(1)
+
+    company = job_row["company"]
+    title = job_row["title"]
+    click.echo(f"Enriching company data for: {company} ({title})")
+
+    system = (
+        "You are a company research analyst. Given a company name and job title, "
+        "use web search to find current, factual information about the company. "
+        "Return a JSON object with these fields:\n"
+        '- "company_name": string\n'
+        '- "industry": string or null\n'
+        '- "company_size": string or null (e.g. "1000-5000 employees")\n'
+        '- "founded": string or null (year)\n'
+        '- "hq_location": string or null\n'
+        '- "description": string or null (1-2 sentences)\n'
+        '- "recent_news": list of strings (up to 3 recent headlines)\n'
+        '- "glassdoor_rating": float or null (0.0-5.0)\n'
+        '- "tech_stack": list of strings (known technologies)\n'
+        '- "culture_notes": string or null (brief culture summary)\n\n'
+        "Return ONLY valid JSON."
+    )
+    prompt = f"Company: {company}\nJob title: {title}\nJob location: {job_row.get('location', 'Unknown')}"
+
+    try:
+        router = get_router()
+        response = router.generate_with_grounding(
+            task="company_enrichment",
+            system=system,
+            prompt=prompt,
+            max_tokens=2000,
+        )
+        data = parse_json_response(response.text)
+        enrichment = CompanyEnrichment(**data)
+
+        click.echo(f"\n{'=' * 50}")
+        click.echo(f"Company: {enrichment.company_name}")
+        if enrichment.industry:
+            click.echo(f"Industry: {enrichment.industry}")
+        if enrichment.company_size:
+            click.echo(f"Size: {enrichment.company_size}")
+        if enrichment.founded:
+            click.echo(f"Founded: {enrichment.founded}")
+        if enrichment.hq_location:
+            click.echo(f"HQ: {enrichment.hq_location}")
+        if enrichment.description:
+            click.echo(f"About: {enrichment.description}")
+        if enrichment.glassdoor_rating:
+            click.echo(f"Glassdoor: {enrichment.glassdoor_rating}/5.0")
+        if enrichment.tech_stack:
+            click.echo(f"Tech Stack: {', '.join(enrichment.tech_stack)}")
+        if enrichment.culture_notes:
+            click.echo(f"Culture: {enrichment.culture_notes}")
+        if enrichment.recent_news:
+            click.echo("\nRecent News:")
+            for news in enrichment.recent_news:
+                click.echo(f"  - {news}")
+        click.echo(f"\n(Provider: {response.provider})")
+
+    except RuntimeError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        click.echo("Make sure GOOGLE_API_KEY is set in .env for Gemini grounding.", err=True)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 """Tests for skill market analytics (Phase 6)."""
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -58,7 +57,7 @@ class TestSaveJobSkills:
     def test_deduplicates_same_skill_same_source(self, db):
         job_id = save_job(_make_job(), "https://example.com/2")
         analysis = _make_analysis(keywords=["python", "python"])
-        count = save_job_skills(job_id, analysis)
+        save_job_skills(job_id, analysis)
         # Second "python" should be silently skipped
         stats = get_skill_stats()
         python_entries = [s for s in stats if s["skill"] == "python"]
@@ -87,7 +86,7 @@ class TestSaveJobSkills:
 
     def test_skips_empty_skills(self, db):
         job_id = save_job(_make_job(), "https://example.com/5")
-        count = save_job_skills(job_id, _make_analysis(keywords=["python", "", "  "]))
+        save_job_skills(job_id, _make_analysis(keywords=["python", "", "  "]))
         # Only non-empty skills should be saved
         stats = get_skill_stats()
         assert all(s["skill"].strip() for s in stats)
@@ -150,7 +149,7 @@ class TestGetSkillStatsByRole:
         by_role = get_skill_stats_by_role()
         assert len(by_role) > 0
         # All roles should have python
-        for role, skills in by_role.items():
+        for _role, skills in by_role.items():
             skill_names = [s["skill"] for s in skills]
             assert "python" in skill_names
 

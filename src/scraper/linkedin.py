@@ -11,6 +11,7 @@ from urllib.parse import quote_plus, urljoin
 
 from playwright.async_api import Page, async_playwright
 
+from src.config import get as cfg
 from src.scraper.browser_session import has_session, session_path
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,24 @@ async def _async_search_linkedin(query: str, limit: int = 25) -> list[dict]:
     """Internal async implementation of LinkedIn job search."""
     encoded_query = quote_plus(query)
     search_url = f"https://www.linkedin.com/jobs/search/?keywords={encoded_query}&refresh=true"
+
+    # Apply config filters
+    location = cfg("linkedin", "location", "")
+    if location:
+        search_url += f"&location={quote_plus(location)}"
+    date_posted = cfg("linkedin", "date_posted", "")
+    if date_posted:
+        # Map friendly names to LinkedIn's f_TPR values
+        date_map = {
+            "24": "r86400", "24h": "r86400", "day": "r86400",
+            "week": "r604800", "7d": "r604800",
+            "month": "r2592000", "30d": "r2592000",
+        }
+        f_tpr = date_map.get(date_posted, date_posted)
+        search_url += f"&f_TPR={f_tpr}"
+    remote = cfg("linkedin", "remote", "")
+    if remote:
+        search_url += f"&f_WT={remote}"
 
     async with async_playwright() as p:
         browser, context = await _create_linkedin_context(p)

@@ -33,3 +33,26 @@ telegram:
 # Controls how screening question answers are matched from the cache.
 matching:
   fuzzy_threshold: 0.75       # Similarity threshold for fuzzy answer matching, 0.0-1.0 (default: 0.75)
+
+# --- Multi-LLM Support ---
+# Route tasks to different providers. All default to Anthropic (zero change until you opt in).
+# Set GOOGLE_API_KEY in .env to enable Gemini.
+llm:
+  default_provider: anthropic  # Fallback provider for unrouted tasks
+  providers:
+    anthropic:
+      extraction_model: claude-haiku-4-5-20251001
+      analysis_model: claude-sonnet-4-20250514
+      generation_model: claude-sonnet-4-20250514
+    gemini:
+      extraction_model: gemini-2.0-flash
+      analysis_model: gemini-2.5-pro
+      generation_model: gemini-2.5-pro
+  routing:
+    extraction: anthropic        # Job data extraction from scraped pages
+    analysis: anthropic          # Fit score analysis
+    resume_generation: anthropic # Resume content generation
+    cover_letter: anthropic      # Cover letter content generation
+    computer_use: anthropic      # Browser automation (Claude-only)
+    company_enrichment: gemini   # Company research with Google Search grounding
+    location_scoring: gemini     # Location evaluation with Google Search grounding

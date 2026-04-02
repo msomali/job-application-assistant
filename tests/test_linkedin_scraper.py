@@ -1,7 +1,7 @@
 """Tests for LinkedIn scraping in src/scraper/linkedin.py."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

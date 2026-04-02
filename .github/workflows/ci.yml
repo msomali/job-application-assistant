@@ -9,6 +9,11 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: "sk-test-fake-key"
+      FIRECRAWL_API_KEY: "fc-test-fake-key"
+      TELEGRAM_BOT_TOKEN: "fake-token"
+      TELEGRAM_USER_ID: "12345"
     steps:
       - uses: actions/checkout@v4
 
@@ -17,16 +22,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
+        run: make ci
 
-      - name: Lint with ruff
-        run: ruff check src/ tests/
+      - name: Lint
+        run: make lint
 
-      - name: Run tests
-        env:
-          ANTHROPIC_API_KEY: "sk-test-fake-key"
-          FIRECRAWL_API_KEY: "fc-test-fake-key"
-          TELEGRAM_BOT_TOKEN: "fake-token"
-          TELEGRAM_USER_ID: "12345"
-        run: pytest -v --tb=short
+      - name: Type check
+        run: make typecheck
+
+      - name: Test
+        run: make test

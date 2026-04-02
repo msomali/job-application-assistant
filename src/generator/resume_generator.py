@@ -8,9 +8,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import anthropic
 from anthropic import APIError, APITimeoutError, RateLimitError
 
+from src.llm import get_router, parse_json_response
 from src.models import JobAnalysis, JobPosting, ResumeContent
 from src.privacy import PIIGuard
 from src.utils import retry
@@ -56,14 +56,14 @@ ROLE SELECTION RULES:
 - For junior/entry-level positions: prioritize the most recent 2 roles and any internships or projects directly relevant to the job.
 - For mid/senior positions: prioritize roles that demonstrate progression and direct skill overlap.
 - OMIT roles that don't contribute to the narrative for THIS job, even if they're recent.
-- Each role gets 2-3 bullets maximum (not 5). Every bullet must earn its space.
+- The exact bullet count per role is specified in the Content Plan below. Follow it exactly.
 
 CONTENT PRIORITY (in order — stop when the page is full):
 1. Name, contact info (provided separately)
-2. Experience (most relevant roles only, 2-3 bullets each)
+2. Experience (most relevant roles, bullet count per Content Plan)
 3. Skills (one line, most relevant first)
 4. Education (degree, school, location, full date range — one line each)
-5. ONLY if space allows: Certifications, Projects, or Professional Summary
+5. Certifications, Projects, Professional Summary — as specified in Content Plan
 
 IMPORTANT STYLE RULES:
 - Write naturally. Every bullet should read like a person describing their work, not like AI output.
@@ -71,7 +71,7 @@ IMPORTANT STYLE RULES:
 - Use complete, flowing sentences. Start with strong action verbs.
 - Be specific and quantify results, but keep the tone conversational and authentic.
 - Avoid buzzword stacking. Use plain language where possible.
-- Keep bullets SHORT — one line each if possible, two lines maximum.
+- Each bullet should be 130-180 characters long (wraps to exactly 2 printed lines in the PDF).
 
 Return a JSON object with these fields:
 
@@ -81,7 +81,7 @@ Return a JSON object with these fields:
   - "company": company name
   - "location": city/state or city/country (from the candidate profile)
   - "dates": date range string
-  - "bullets": list of 2-3 SHORT achievement bullets. Prioritize bullets that match the job requirements.
+  - "bullets": list of achievement bullets (count specified in Content Plan). Prioritize bullets that match the job requirements.
 - "skills_section": string, comma-separated skills ordered by relevance to this job (one line)
 - "education": list of objects, each with:
   - "degree": degree name
@@ -123,7 +123,7 @@ Return a JSON object with these fields:
   - "company": company name
   - "location": city/state or city/country (from the candidate profile)
   - "dates": date range string
-  - "bullets": list of 3-5 achievement bullets, tailored to highlight relevant experience. Write each bullet as a natural sentence. Quantify results where possible. Prioritize bullets that match the job requirements.
+  - "bullets": list of achievement bullets (exact count specified in Content Plan). Write each bullet as a natural sentence. Quantify results where possible. Prioritize bullets that match the job requirements. Each bullet should be 130-180 characters.
 - "skills_section": string, comma-separated skills ordered by relevance to this job
 - "education": list of objects, each with:
   - "degree": degree name
@@ -159,8 +159,24 @@ def _get_experience_level(job: JobPosting) -> str:
 def _build_content_plan(master_resume: dict, exp_level: str, pages: int) -> dict:
     """Pre-analyze master resume and build a content plan for Claude.
 
-    Estimates how much content fits on the page and tells Claude exactly
-    what to include so there are no gaps and no overflow.
+    Uses point-based measurements from the actual LaTeX template to calculate
+    exactly how much content fits on the page. All constants were measured
+    empirically using savebox heights with the resume.tex template
+    (10pt lmodern, letterpaper, 0.5in/0.4in margins).
+
+    Component heights (in points, from savebox measurements):
+      Header (name + contact):      48 pt
+      Section header (\\section*):  22 pt
+      Summary (header + 3-line):    49 pt
+      Role base (title + itemize):  11 pt  (without bullets)
+      Bullet (2-line wrap):         25 pt  (incremental per bullet)
+      Skills section (2-line):      44 pt
+      Education entry (+ location): 22 pt  (per degree)
+      Certs section (1-line):       32 pt
+      Project entry (title+bullet): 39 pt  (incremental per project)
+
+    Page budget: 706 pt (savebox height that fits 1 page with 15pt safety).
+    Empirically verified: 3r×5b+0proj (663pt) fits, 3r×6b (738pt) overflows.
     """
     n_experiences = len(master_resume.get("experience", []))
     n_projects = len(master_resume.get("projects", []))
@@ -168,69 +184,71 @@ def _build_content_plan(master_resume: dict, exp_level: str, pages: int) -> dict
     n_education = len(master_resume.get("education", []))
     has_summary = bool(master_resume.get("summary"))
 
-    # Estimate content budget in "lines" for the target page count
-    # A single page at 10pt with 0.5in margins fits ~38-42 content lines
-    # (accounting for section headers, spacing, and LaTeX overhead)
-    lines_per_page = 38
-    total_lines = lines_per_page * pages
+    # Point-based constants (measured from LaTeX template)
+    PAGE_BUDGET = 722 * pages   # savebox pts that fit on page (8pt safety from 730 boundary)
+    HEADER_PT = 48              # name + contact line
+    SECTION_HDR_PT = 22         # \section*{...} with rule + spacing
+    SUMMARY_PT = 49             # section header + ~3 lines of text
+    ROLE_BASE_PT = 11           # cvsection title + itemize env overhead
+    BULLET_PT = 25              # one 2-line bullet (incremental)
+    SKILLS_PT = 44              # section header + 2-line skills list
+    EDU_HDR_PT = 22             # Education section header
+    EDU_ENTRY_PT = 22           # one degree entry (title + location line)
+    CERTS_PT = 32               # section header + 1-line certs
+    PROJ_HDR_PT = 22            # Projects section header
+    PROJ_ENTRY_PT = 39          # one project (title + 1 two-line bullet)
 
-    # Fixed overhead: header(3) + skills section(4) + education(2 + n_education*2) + section gaps(4)
-    overhead = 3 + 4 + 2 + (n_education * 2) + 4
-    available = total_lines - overhead
+    # Fixed costs (always present)
+    fixed = HEADER_PT + SECTION_HDR_PT + SKILLS_PT + EDU_HDR_PT + (n_education * EDU_ENTRY_PT)
+    budget = PAGE_BUDGET - fixed
 
-    # Determine experience allocation
+    # Determine initial role count based on experience level
     if n_experiences <= 3:
-        # Short resume: include ALL experiences, use more bullets to fill
         max_roles = n_experiences
-        bullets_per_role = min(5, max(3, available // max(n_experiences, 1) // 2))
         content_thin = True
     else:
         content_thin = False
         if pages == 1:
-            if exp_level == "junior":
-                max_roles = min(3, n_experiences)
-                bullets_per_role = 3
-            else:
-                max_roles = min(4, n_experiences)
-                bullets_per_role = 3
+            max_roles = 3 if exp_level == "junior" else min(4, n_experiences)
         else:
             max_roles = min(6, n_experiences)
-            bullets_per_role = 4
 
-    # Estimate lines used by experience
-    # Each role: title line(1) + bullets(N) + spacing(1) = bullets + 2
-    exp_lines = max_roles * (bullets_per_role + 2)
-    remaining = available - exp_lines
+    # Evaluate candidate fill strategies and pick the one with least waste.
+    # Each candidate is (bullets_per_role, include_summary, include_certs,
+    #                     include_projects, max_projects, waste_pt)
+    max_bpr = 5 if pages == 1 else 6
+    if content_thin:
+        max_bpr = 6
+    proj_cap = 2 if pages == 1 else 3
 
-    # Decide optional sections based on remaining space
-    include_summary = False
-    include_certs = False
-    include_projects = False
-    max_projects = 0
+    best = None
+    for bpr in range(3, max_bpr + 1):
+        exp_cost = max_roles * (ROLE_BASE_PT + bpr * BULLET_PT)
+        rem = budget - exp_cost
+        if rem < 0:
+            break
 
-    if remaining >= 3 and has_summary:
-        include_summary = True
-        remaining -= 3  # summary = ~3 lines
+        # Always try to include summary and certs
+        s = has_summary and rem >= SUMMARY_PT
+        if s:
+            rem -= SUMMARY_PT
+        c = n_certs > 0 and rem >= CERTS_PT
+        if c:
+            rem -= CERTS_PT
 
-    if remaining >= 2 and n_certs > 0:
-        include_certs = True
-        remaining -= 2  # certs = ~1-2 lines
+        # Try with projects
+        np = 0
+        if n_projects > 0 and rem >= PROJ_HDR_PT + PROJ_ENTRY_PT:
+            rem -= PROJ_HDR_PT
+            while np < min(n_projects, proj_cap) and rem >= PROJ_ENTRY_PT:
+                np += 1
+                rem -= PROJ_ENTRY_PT
 
-    if remaining >= 4 and n_projects > 0:
-        include_projects = True
-        max_projects = min(n_projects, remaining // 2)  # ~2 lines per project
-        remaining -= max_projects * 2
+        # Pick the option with least waste (rem closest to 0 but >= 0)
+        if rem >= 0 and (best is None or rem < best[5]):
+            best = (bpr, s, c, np > 0, np, rem)
 
-    # If still lots of space and content is thin, add more bullets
-    if remaining > 5 and content_thin:
-        bullets_per_role = min(6, bullets_per_role + remaining // max(max_roles, 1))
-
-    # If still space, bump up projects or add summary if skipped
-    if remaining > 4 and not include_summary and has_summary:
-        include_summary = True
-    if remaining > 6 and not include_projects and n_projects > 0:
-        include_projects = True
-        max_projects = min(2, n_projects)
+    bullets_per_role, include_summary, include_certs, include_projects, max_projects, _ = best
 
     return {
         "max_roles": max_roles,
@@ -261,7 +279,6 @@ def generate_resume_content(
         pages: Target page count. Default 1 (single-page resume).
     """
     logger.info("Generating %d-page resume for %s at %s", pages, job.title, job.company)
-    client = anthropic.Anthropic()
 
     guard = None
     resume_for_llm = master_resume
@@ -300,7 +317,11 @@ def generate_resume_content(
     else:
         content_instructions += "select the most relevant ones.)\n"
 
-    content_instructions += f"- {plan['bullets_per_role']} bullets per role\n"
+    content_instructions += (
+        f"- EXACTLY {plan['bullets_per_role']} bullets per role "
+        "(this count is calculated to fill the page — do NOT use fewer)\n"
+        "- Each bullet should be 130-180 characters (wraps to exactly 2 printed lines)\n"
+    )
 
     if plan["include_summary"]:
         content_instructions += "- INCLUDE a 2-3 sentence professional summary\n"
@@ -330,50 +351,33 @@ def generate_resume_content(
 
     logger.info("Content plan: %s", plan)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=3000,
-        system=[
-            {
-                "type": "text",
-                "text": system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"## Candidate's Full Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}",
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
-                            f"Requirements:\n{requirements_text}\n\n"
-                            f"## Tailoring Strategy\n{analysis.tailoring_strategy}\n\n"
-                            f"## Keywords to Emphasize\n{keywords_text}"
-                            f"{content_instructions}"
-                        ),
-                    },
-                ],
-            }
-        ],
+    cached_content = (
+        f"## Candidate's Full Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}"
+    )
+    variable_content = (
+        f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
+        f"Requirements:\n{requirements_text}\n\n"
+        f"## Tailoring Strategy\n{analysis.tailoring_strategy}\n\n"
+        f"## Keywords to Emphasize\n{keywords_text}"
+        f"{content_instructions}"
     )
 
-    response_text = message.content[0].text.strip()
-    # Strip markdown code fences if present
-    response_text = re.sub(r"^\s*```(?:json)?\s*", "", response_text)
-    response_text = re.sub(r"\s*```\s*$", "", response_text)
+    router = get_router()
+    response = router.generate_with_cache(
+        task="resume_generation",
+        system=system_prompt,
+        cached_content=cached_content,
+        variable_content=variable_content,
+        max_tokens=3000,
+    )
+
+    response_text = response.text
     if guard:
         response_text = guard.restore(response_text)
 
-    data = json.loads(response_text)
-    logger.info("Resume content generated (%d-page, %s-level, %d roles, plan=%s)",
-                pages, exp_level, len(data.get("experience", [])), plan)
+    data = parse_json_response(response_text)
+    logger.info("Resume content generated (%d-page, %s-level, %d roles, plan=%s, provider=%s)",
+                pages, exp_level, len(data.get("experience", [])), plan, response.provider)
     return ResumeContent(**data)
 
 

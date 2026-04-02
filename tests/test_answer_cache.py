@@ -1,7 +1,6 @@
 """Tests for the answer learning/caching system (Phase 7)."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -132,7 +131,7 @@ class TestFindAnswerFuzzy:
 
     def test_fuzzy_matches_similar_question(self, db):
         save_answer("What is your email address?", "john@example.com")
-        result = find_answer_fuzzy("What is your email?")
+        result = find_answer_fuzzy("What is your email?", threshold=0.75)
         assert result is not None
         assert result["answer"] == "john@example.com"
         assert "_fuzzy_score" in result
@@ -150,7 +149,7 @@ class TestFindAnswerFuzzy:
 
     def test_increments_usage_on_fuzzy(self, db):
         save_answer("What is your email address?", "john@example.com")
-        find_answer_fuzzy("What is your email?")
+        find_answer_fuzzy("What is your email?", threshold=0.75)
         answers = list_answers()
         assert answers[0]["times_used"] == 1
 

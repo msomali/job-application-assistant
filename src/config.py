@@ -38,6 +38,30 @@ _DEFAULTS: dict[str, Any] = {
     "matching": {
         "fuzzy_threshold": 0.75,
     },
+    "llm": {
+        "default_provider": "anthropic",
+        "providers": {
+            "anthropic": {
+                "extraction_model": "claude-haiku-4-5-20251001",
+                "analysis_model": "claude-sonnet-4-20250514",
+                "generation_model": "claude-sonnet-4-20250514",
+            },
+            "gemini": {
+                "extraction_model": "gemini-2.0-flash",
+                "analysis_model": "gemini-2.5-pro",
+                "generation_model": "gemini-2.5-pro",
+            },
+        },
+        "routing": {
+            "extraction": "anthropic",
+            "analysis": "anthropic",
+            "resume_generation": "anthropic",
+            "cover_letter": "anthropic",
+            "computer_use": "anthropic",
+            "company_enrichment": "gemini",
+            "location_scoring": "gemini",
+        },
+    },
 }
 
 _config: dict[str, Any] | None = None

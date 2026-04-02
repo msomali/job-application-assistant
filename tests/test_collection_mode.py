@@ -9,7 +9,6 @@ from src.db.database import (
     get_application,
     get_collected_jobs,
     get_uncollected_jobs,
-    init_db,
     save_analysis,
     save_job,
     update_application,

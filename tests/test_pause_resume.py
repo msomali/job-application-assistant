@@ -9,9 +9,8 @@ from src.db.database import (
     clear_pause_state,
     get_application,
     get_pause_state,
-    init_db,
-    save_pause_state,
     save_job,
+    save_pause_state,
     update_application,
 )
 

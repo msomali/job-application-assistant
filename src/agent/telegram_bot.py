@@ -1,6 +1,7 @@
 """Telegram bot for job application notifications and human-in-the-loop approval."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -51,6 +52,16 @@ _last_heavy_cmd: dict[int, float] = {}
 _HEAVY_CMD_COOLDOWN = 30  # seconds between discover/search/apply
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
+
+
+def _md_escape(text) -> str:
+    """Escape Telegram Markdown V1 special characters in dynamic text."""
+    if text is None:
+        return "N/A"
+    text = str(text)
+    for ch in "_*`[":
+        text = text.replace(ch, f"\\{ch}")
+    return text
 
 
 def _check_rate_limit(user_id: int) -> str | None:
@@ -140,10 +151,10 @@ async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["*Latest Jobs:*\n"]
     for j in jobs:
         score = j.get("fit_score") or "-"
-        status = j.get("status") or "new"
-        lines.append(
-            f"`{j['id']:>3}` | {score:>3} | {status} | {j['title'][:25]} @ {j['company'][:15]}"
-        )
+        status = _md_escape(j.get("status") or "new")
+        title = _md_escape(j["title"][:25])
+        company = _md_escape(j["company"][:15])
+        lines.append(f"`{j['id']:>3}` | {score:>3} | {status} | {title} @ {company}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -163,10 +174,10 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"*Top Matches (score >= {notify_score}):*\n"]
     for j in top[:10]:
-        status = j.get("status") or "new"
-        lines.append(
-            f"`{j['id']:>3}` | {j['fit_score']:>3} | {status} | {j['title'][:25]} @ {j['company'][:15]}"
-        )
+        status = _md_escape(j.get("status") or "new")
+        title = _md_escape(j["title"][:25])
+        company = _md_escape(j["company"][:15])
+        lines.append(f"`{j['id']:>3}` | {j['fit_score']:>3} | {status} | {title} @ {company}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -193,25 +204,28 @@ async def cmd_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
     analysis = get_analysis(job_id)
 
     text = (
-        f"*{job['title']}*\n"
-        f"Company: {job['company']}\n"
-        f"Location: {job.get('location', 'N/A')}\n"
-        f"Type: {job.get('job_type', 'N/A')}\n"
-        f"Salary: {job.get('salary_range', 'N/A')}\n"
+        f"*{_md_escape(job['title'])}*\n"
+        f"Company: {_md_escape(job['company'])}\n"
+        f"Location: {_md_escape(job.get('location', 'N/A'))}\n"
+        f"Type: {_md_escape(job.get('job_type', 'N/A'))}\n"
+        f"Salary: {_md_escape(job.get('salary_range', 'N/A'))}\n"
         f"URL: {job.get('url', 'N/A')}\n"
     )
 
     if analysis:
+        matching = _md_escape(", ".join(analysis.get("matching_skills", [])[:5]))
+        gaps = _md_escape(", ".join(analysis.get("gaps", [])[:3]))
+        strategy = _md_escape((analysis.get("tailoring_strategy") or "N/A")[:200])
         text += (
             f"\n*Fit Score: {analysis['fit_score']}/100*\n"
-            f"Matching: {', '.join(analysis.get('matching_skills', [])[:5])}\n"
-            f"Gaps: {', '.join(analysis.get('gaps', [])[:3])}\n"
-            f"Strategy: {analysis.get('tailoring_strategy', 'N/A')[:200]}"
+            f"Matching: {matching}\n"
+            f"Gaps: {gaps}\n"
+            f"Strategy: {strategy}"
         )
 
     app_data = get_application(job_id)
     if app_data:
-        text += f"\n\nStatus: *{app_data.get('status', 'unknown')}*"
+        text += f"\n\nStatus: *{_md_escape(app_data.get('status') or 'unknown')}*"
         if app_data.get("resume_path"):
             text += "\nResume: generated"
         if app_data.get("cover_letter_path"):
@@ -264,16 +278,17 @@ async def cmd_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Rejected: {stats['rejected']}",
         "",
         "*Conversion:*",
-        f"Discover → Docs: {conv['discover_to_docs']}",
-        f"Docs → Applied: {conv['docs_to_applied']}",
-        f"Applied → Interview: {conv['applied_to_interview']}",
-        f"Interview → Offer: {conv['interview_to_offer']}",
+        f"Discover > Collected: {conv['discover_to_collected']}",
+        f"Collected > Docs: {conv['collected_to_docs']}",
+        f"Docs > Applied: {conv['docs_to_applied']}",
+        f"Applied > Interview: {conv['applied_to_interview']}",
+        f"Interview > Offer: {conv['interview_to_offer']}",
     ]
 
     if avg:
         lines.append("\n*Avg Fit Score by Status:*")
         for status, score in sorted(avg.items()):
-            lines.append(f"  {status}: {score}")
+            lines.append(f"  {_md_escape(status)}: {score}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -313,7 +328,7 @@ async def cmd_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     update_application(job_id, status=status)
     await update.message.reply_text(
-        f"Job `{job_id}` ({job['title']}) status updated to *{status}*.",
+        f"Job `{job_id}` ({_md_escape(job['title'])}) status updated to *{status}*.",
         parse_mode="Markdown",
     )
 
@@ -378,9 +393,9 @@ async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE):
             top = sorted(new_jobs, key=lambda j: j["fit_score"], reverse=True)[:10]
             lines = [f"*Discovery Complete — {len(new_jobs)} new jobs:*\n"]
             for j in top:
-                lines.append(
-                    f"`{j['id']:>3}` | {j['fit_score']:>3}% | {j['title'][:25]} @ {j['company'][:15]}"
-                )
+                t = _md_escape(j["title"][:25])
+                c = _md_escape(j["company"][:15])
+                lines.append(f"`{j['id']:>3}` | {j['fit_score']:>3}% | {t} @ {c}")
             if len(new_jobs) > 10:
                 lines.append(f"\n...and {len(new_jobs) - 10} more. Use /jobs to see all.")
             lines.append("\nUse /generate <id> to create docs or /apply <id> to apply.")
@@ -446,9 +461,9 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if new_jobs:
             lines = [f"*Search results for \"{query_str}\":*\n"]
             for j in sorted(new_jobs, key=lambda j: j["fit_score"], reverse=True):
-                lines.append(
-                    f"`{j['id']:>3}` | {j['fit_score']:>3}% | {j['title'][:25]} @ {j['company'][:15]}"
-                )
+                t = _md_escape(j["title"][:25])
+                c = _md_escape(j["company"][:15])
+                lines.append(f"`{j['id']:>3}` | {j['fit_score']:>3}% | {t} @ {c}")
             await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         else:
             await update.message.reply_text("No jobs found for that query.")
@@ -488,7 +503,8 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.scraper.firecrawl_client import _extract_with_claude
         from src.scraper.linkedin import scrape_linkedin_job_async, search_linkedin_async
 
-        results = await search_linkedin_async(query_str, limit=10)
+        limit = cfg("discovery", "search_limit", 5)
+        results = await search_linkedin_async(query_str, limit=limit)
         if not results:
             await update.message.reply_text("No LinkedIn jobs found.")
             return
@@ -499,8 +515,21 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 markdown = await scrape_linkedin_job_async(url)
                 if not markdown:
+                    logger.warning("Empty markdown from LinkedIn scrape: %s", url)
                     continue
-                extracted = _extract_with_claude(markdown)
+                try:
+                    extracted = _extract_with_claude(markdown)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    # Claude extraction failed — fall back to card data + scraped markdown
+                    logger.warning(
+                        "Claude extraction failed for %s (%s), using card data", url, exc
+                    )
+                    extracted = {
+                        "title": result.get("title", "Unknown"),
+                        "company": result.get("company", "Unknown"),
+                        "location": result.get("location", ""),
+                        "description": markdown,
+                    }
                 from src.models import JobPosting
                 job = JobPosting(**extracted)
                 job_id = save_job(job.model_dump(), url, markdown)
@@ -508,10 +537,10 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_analysis(job_id, analysis.model_dump())
                 lines.append(
                     f"`{job_id:>3}` | {analysis.fit_score:>3}% | "
-                    f"{job.title[:25]} @ {job.company[:15]}"
+                    f"{_md_escape(job.title[:25])} @ {_md_escape(job.company[:15])}"
                 )
             except Exception as e:
-                logger.debug("LinkedIn scrape/analysis failed for %s: %s", url, e)
+                logger.warning("LinkedIn scrape/analysis failed for %s: %s", url, e)
                 continue
 
         if len(lines) > 1:
@@ -547,11 +576,11 @@ async def cmd_scrape(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_analysis(job_id, analysis.model_dump())
 
         text = (
-            f"*{job.title}* at {job.company}\n"
-            f"Location: {job.location}\n"
+            f"*{_md_escape(job.title)}* at {_md_escape(job.company)}\n"
+            f"Location: {_md_escape(job.location or 'N/A')}\n"
             f"Fit Score: *{analysis.fit_score}/100*\n"
-            f"Matching: {', '.join(analysis.matching_skills[:5])}\n"
-            f"Gaps: {', '.join(analysis.gaps[:3])}\n"
+            f"Matching: {_md_escape(', '.join(analysis.matching_skills[:5]))}\n"
+            f"Gaps: {_md_escape(', '.join(analysis.gaps[:3]))}\n"
             f"\nJob ID: `{job_id}`\n"
             f"Use /generate {job_id} to create docs."
         )
@@ -628,13 +657,13 @@ async def _handle_pasted_description(update: Update, context: ContextTypes.DEFAU
         save_analysis(job_id, analysis.model_dump())
 
         reply = (
-            f"*{job.title}* at {job.company}\n"
-            f"Location: {job.location}\n"
-            f"Type: {job.job_type or 'N/A'}\n"
-            f"Salary: {job.salary_range or 'N/A'}\n\n"
+            f"*{_md_escape(job.title)}* at {_md_escape(job.company)}\n"
+            f"Location: {_md_escape(job.location or 'N/A')}\n"
+            f"Type: {_md_escape(job.job_type or 'N/A')}\n"
+            f"Salary: {_md_escape(job.salary_range or 'N/A')}\n\n"
             f"*Fit Score: {analysis.fit_score}/100*\n"
-            f"Matching: {', '.join(analysis.matching_skills[:5])}\n"
-            f"Gaps: {', '.join(analysis.gaps[:3])}\n"
+            f"Matching: {_md_escape(', '.join(analysis.matching_skills[:5]))}\n"
+            f"Gaps: {_md_escape(', '.join(analysis.gaps[:3]))}\n"
             f"\nJob ID: `{job_id}`\n"
             f"Use /generate {job_id} to create docs."
         )
@@ -767,7 +796,7 @@ async def cmd_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        f"Starting application for: *{job_data['title']}* at {job_data['company']}\n"
+        f"Starting application for: *{_md_escape(job_data['title'])}* at {_md_escape(job_data['company'])}\n"
         f"URL: {application_url}\n\n"
         "Opening browser and filling form...",
         parse_mode="Markdown",
@@ -855,7 +884,9 @@ async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"*Collected {count} jobs* (score >= {min_score}):\n"]
     for j in uncollected:
-        lines.append(f"#{j['id']} — {j['fit_score']}pts — {j['title']} at {j['company']}")
+        lines.append(
+            f"#{j['id']} — {j['fit_score']}pts — {_md_escape(j['title'])} at {_md_escape(j['company'])}"
+        )
     lines.append("\nUse /review to see details, /approve <ids> to generate docs.")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -877,16 +908,16 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         skills = ", ".join(j.get("matching_skills", [])[:5])
         gaps = ", ".join(j.get("gaps", [])[:3])
         text = (
-            f"*#{j['id']} — {j['title']}*\n"
-            f"Company: {j['company']} | Location: {j['location']}\n"
+            f"*#{j['id']} — {_md_escape(j['title'])}*\n"
+            f"Company: {_md_escape(j['company'])} | Location: {_md_escape(j['location'] or 'N/A')}\n"
             f"Score: {j['fit_score']}/100\n"
-            f"Skills: {skills}\n"
+            f"Skills: {_md_escape(skills)}\n"
         )
         if gaps:
-            text += f"Gaps: {gaps}\n"
+            text += f"Gaps: {_md_escape(gaps)}\n"
         strategy = j.get("tailoring_strategy", "")
         if strategy:
-            text += f"Strategy: {strategy[:150]}\n"
+            text += f"Strategy: {_md_escape(strategy[:150])}\n"
         await update.message.reply_text(text, parse_mode="Markdown")
 
     await update.message.reply_text(
@@ -1223,7 +1254,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     application_url = job_data.get("application_url") or job_data.get("url", "")
     await update.message.reply_text(
-        f"Resuming application for *{job_data['title']}* at {job_data['company']}\n"
+        f"Resuming application for *{_md_escape(job_data['title'])}* at {_md_escape(job_data['company'])}\n"
         f"Paused at step {pause_state['step']}. Reopening browser...",
         parse_mode="Markdown",
     )

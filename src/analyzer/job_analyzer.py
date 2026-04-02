@@ -4,9 +4,9 @@ import json
 import logging
 from pathlib import Path
 
-import anthropic
 from anthropic import APIError, APITimeoutError, RateLimitError
 
+from src.llm import get_router, parse_json_response
 from src.models import JobAnalysis, JobPosting
 from src.privacy import PIIGuard
 from src.utils import retry
@@ -97,7 +97,7 @@ def load_master_resume() -> dict:
     return json.loads(MASTER_RESUME_PATH.read_text())
 
 
-@retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(APIError, APITimeoutError, RateLimitError))
+@retry(max_retries=3, base_delay=1.0, max_delay=30.0, exceptions=(APIError, APITimeoutError, RateLimitError, ValueError, json.JSONDecodeError))
 def analyze_job(job: JobPosting, *, redact: bool = True) -> JobAnalysis:
     """Analyze a job posting against the user's master resume.
 
@@ -107,7 +107,6 @@ def analyze_job(job: JobPosting, *, redact: bool = True) -> JobAnalysis:
     """
     logger.info("Analyzing job: %s at %s", job.title, job.company)
     resume = load_master_resume()
-    client = anthropic.Anthropic()
 
     guard = None
     if redact:
@@ -118,44 +117,27 @@ def analyze_job(job: JobPosting, *, redact: bool = True) -> JobAnalysis:
     # Extract candidate preferences for scoring rules
     preferences_text = _build_preferences_text(resume)
 
-    # Build job-specific content (changes per job)
-    job_text = _format_job_text(job)
+    # Build content blocks
+    cached_content = (
+        f"## Candidate Profile\n{json.dumps(resume, separators=(',', ':'))}"
+        f"\n\n## Candidate Preferences\n{preferences_text}"
+    )
+    variable_content = _format_job_text(job)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    router = get_router()
+    response = router.generate_with_cache(
+        task="analysis",
+        system=ANALYSIS_SYSTEM_PROMPT,
+        cached_content=cached_content,
+        variable_content=variable_content,
         max_tokens=2000,
-        system=[
-            {
-                "type": "text",
-                "text": ANALYSIS_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            f"## Candidate Profile\n{json.dumps(resume, separators=(',', ':'))}"
-                            f"\n\n## Candidate Preferences\n{preferences_text}"
-                        ),
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": job_text,
-                    },
-                ],
-            }
-        ],
     )
 
-    response_text = message.content[0].text
+    response_text = response.text
     if guard:
         response_text = guard.restore(response_text)
 
-    analysis_data = json.loads(response_text)
-    logger.info("Analysis complete for %s at %s: fit_score=%d", job.title, job.company, analysis_data["fit_score"])
+    analysis_data = parse_json_response(response_text)
+    logger.info("Analysis complete for %s at %s: fit_score=%d (provider=%s)",
+                job.title, job.company, analysis_data["fit_score"], response.provider)
     return JobAnalysis(**analysis_data)

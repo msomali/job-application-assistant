@@ -39,8 +39,8 @@ _PII_FIELDS = [
 
 # Reference PII — people mentioned in the resume (supervisors, recommenders)
 # These are extracted dynamically from resume references and recommendations.
-_REFERENCE_TOKEN_PREFIX = "REFERENCE"
-_RECOMMENDER_TOKEN_PREFIX = "RECOMMENDER"
+_REFERENCE_TOKEN_PREFIX = "REFERENCE"  # noqa: S105
+_RECOMMENDER_TOKEN_PREFIX = "RECOMMENDER"  # noqa: S105
 
 # Fields that should NOT be redacted (needed for LLM quality):
 # - City/State (location matching)

@@ -7,6 +7,7 @@ import pytest
 
 from src.generator import cover_letter_generator as cl_gen
 from src.generator import resume_generator as resume_gen
+from src.llm.base import LLMResponse
 from src.models import (
     CoverLetterContent,
     JobAnalysis,
@@ -27,6 +28,17 @@ def sample_job(sample_job_data):
 @pytest.fixture()
 def sample_analysis(sample_analysis_data):
     return JobAnalysis(**sample_analysis_data)
+
+
+def _mock_router(response_data):
+    """Create a mock router that returns an LLMResponse with the given JSON data."""
+    mock_r = MagicMock()
+    mock_r.generate_with_cache.return_value = LLMResponse(
+        text=json.dumps(response_data),
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
+    )
+    return mock_r
 
 
 # ---------------------------------------------------------------------------
@@ -94,16 +106,9 @@ class TestGenerateResumeContent:
     def test_returns_resume_content(
         self, sample_job, sample_analysis, master_resume, sample_resume_content_data
     ):
-        block = MagicMock()
-        block.text = json.dumps(sample_resume_content_data)
-        message = MagicMock()
-        message.content = [block]
+        mock_r = _mock_router(sample_resume_content_data)
 
-        with patch("src.generator.resume_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
+        with patch("src.generator.resume_generator.get_router", return_value=mock_r):
             result = resume_gen.generate_resume_content(
                 sample_job, sample_analysis, master_resume
             )
@@ -116,51 +121,34 @@ class TestGenerateResumeContent:
     def test_prompt_includes_job_title(
         self, sample_job, sample_analysis, master_resume, sample_resume_content_data
     ):
-        block = MagicMock()
-        block.text = json.dumps(sample_resume_content_data)
-        message = MagicMock()
-        message.content = [block]
+        mock_r = _mock_router(sample_resume_content_data)
 
-        with patch("src.generator.resume_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
+        with patch("src.generator.resume_generator.get_router", return_value=mock_r):
             resume_gen.generate_resume_content(sample_job, sample_analysis, master_resume)
 
-            call_args = mock_client.messages.create.call_args
-            content_blocks = call_args[1]["messages"][0]["content"]
-            prompt = " ".join(b["text"] for b in content_blocks)
-            assert "Senior Data Engineer" in prompt
-            assert "Acme Corp" in prompt
+            call_kwargs = mock_r.generate_with_cache.call_args[1]
+            all_content = call_kwargs["cached_content"] + " " + call_kwargs["variable_content"]
+            assert "Senior Data Engineer" in all_content
+            assert "Acme Corp" in all_content
 
     def test_prompt_includes_keywords(
         self, sample_job, sample_analysis, master_resume, sample_resume_content_data
     ):
-        block = MagicMock()
-        block.text = json.dumps(sample_resume_content_data)
-        message = MagicMock()
-        message.content = [block]
+        mock_r = _mock_router(sample_resume_content_data)
 
-        with patch("src.generator.resume_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
+        with patch("src.generator.resume_generator.get_router", return_value=mock_r):
             resume_gen.generate_resume_content(sample_job, sample_analysis, master_resume)
 
-            call_args = mock_client.messages.create.call_args
-            content_blocks = call_args[1]["messages"][0]["content"]
-            prompt = " ".join(b["text"] for b in content_blocks)
-            assert "PySpark" in prompt
-            assert "Airflow" in prompt
+            call_kwargs = mock_r.generate_with_cache.call_args[1]
+            all_content = call_kwargs["cached_content"] + " " + call_kwargs["variable_content"]
+            assert "PySpark" in all_content
+            assert "Airflow" in all_content
 
     def test_api_error_propagates(self, sample_job, sample_analysis, master_resume):
-        with patch("src.generator.resume_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.side_effect = Exception("Rate limited")
+        mock_r = MagicMock()
+        mock_r.generate_with_cache.side_effect = Exception("Rate limited")
 
+        with patch("src.generator.resume_generator.get_router", return_value=mock_r):
             with pytest.raises(Exception, match="Rate limited"):
                 resume_gen.generate_resume_content(
                     sample_job, sample_analysis, master_resume
@@ -176,16 +164,9 @@ class TestGenerateCoverLetterContent:
     def test_returns_cover_letter_content(
         self, sample_job, sample_analysis, master_resume, sample_cover_letter_data
     ):
-        block = MagicMock()
-        block.text = json.dumps(sample_cover_letter_data)
-        message = MagicMock()
-        message.content = [block]
+        mock_r = _mock_router(sample_cover_letter_data)
 
-        with patch("src.generator.cover_letter_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
+        with patch("src.generator.cover_letter_generator.get_router", return_value=mock_r):
             result = cl_gen.generate_cover_letter_content(
                 sample_job, sample_analysis, master_resume
             )
@@ -198,32 +179,23 @@ class TestGenerateCoverLetterContent:
     def test_prompt_includes_matching_skills(
         self, sample_job, sample_analysis, master_resume, sample_cover_letter_data
     ):
-        block = MagicMock()
-        block.text = json.dumps(sample_cover_letter_data)
-        message = MagicMock()
-        message.content = [block]
+        mock_r = _mock_router(sample_cover_letter_data)
 
-        with patch("src.generator.cover_letter_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
+        with patch("src.generator.cover_letter_generator.get_router", return_value=mock_r):
             cl_gen.generate_cover_letter_content(
                 sample_job, sample_analysis, master_resume
             )
 
-            call_args = mock_client.messages.create.call_args
-            content_blocks = call_args[1]["messages"][0]["content"]
-            prompt = " ".join(b["text"] for b in content_blocks)
-            assert "Python" in prompt
-            assert "PySpark" in prompt
+            call_kwargs = mock_r.generate_with_cache.call_args[1]
+            all_content = call_kwargs["cached_content"] + " " + call_kwargs["variable_content"]
+            assert "Python" in all_content
+            assert "PySpark" in all_content
 
     def test_api_error_propagates(self, sample_job, sample_analysis, master_resume):
-        with patch("src.generator.cover_letter_generator.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.side_effect = Exception("Service unavailable")
+        mock_r = MagicMock()
+        mock_r.generate_with_cache.side_effect = Exception("Service unavailable")
 
+        with patch("src.generator.cover_letter_generator.get_router", return_value=mock_r):
             with pytest.raises(Exception, match="Service unavailable"):
                 cl_gen.generate_cover_letter_content(
                     sample_job, sample_analysis, master_resume

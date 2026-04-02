@@ -17,6 +17,7 @@ from src.analyzer.job_analyzer import (
     _format_job_text,
     load_master_resume,
 )
+from src.config import get as cfg
 from src.models import JobPosting
 from src.privacy import PIIGuard
 
@@ -55,6 +56,12 @@ def batch_analyze_jobs(
         f"\n\n## Candidate Preferences\n{preferences_text}"
     )
 
+    # Get model from config (batch is Anthropic-only)
+    providers = cfg("llm", "providers") or {}
+    batch_model = (providers.get("anthropic") or {}).get(
+        "analysis_model", "claude-sonnet-4-20250514"
+    )
+
     requests = []
     for job_id, job in jobs:
         job_text = _format_job_text(job)
@@ -62,7 +69,7 @@ def batch_analyze_jobs(
             {
                 "custom_id": f"analyze-{job_id}",
                 "params": {
-                    "model": "claude-sonnet-4-20250514",
+                    "model": batch_model,
                     "max_tokens": 2000,
                     "system": [
                         {

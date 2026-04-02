@@ -150,13 +150,13 @@ class TestResumeContent:
         assert len(content.education) == 1
         assert len(content.highlighted_projects) == 1
 
-    def test_missing_summary_raises(self):
-        with pytest.raises(ValidationError):
-            ResumeContent(
-                experience=[],
-                skills_section="Python",
-                education=[],
-            )
+    def test_missing_summary_defaults_to_none(self):
+        content = ResumeContent(
+            experience=[],
+            skills_section="Python",
+            education=[],
+        )
+        assert content.summary is None
 
     def test_empty_highlighted_projects_default(self):
         content = ResumeContent(

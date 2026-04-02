@@ -1,7 +1,7 @@
 """Tests for LinkedIn Easy Apply in src/agent/linkedin_apply.py."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

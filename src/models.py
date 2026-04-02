@@ -61,3 +61,29 @@ class CoverLetterContent(BaseModel):
     body_paragraphs: list[str]
     closing_paragraph: str
     sign_off: str
+
+
+class CompanyEnrichment(BaseModel):
+    """Company data enriched via Google Search grounding."""
+
+    company_name: str
+    industry: str | None = None
+    company_size: str | None = None
+    founded: str | None = None
+    hq_location: str | None = None
+    description: str | None = None
+    recent_news: list[str] = []
+    glassdoor_rating: float | None = None
+    tech_stack: list[str] = []
+    culture_notes: str | None = None
+
+
+class LocationScore(BaseModel):
+    """Location evaluation for a job posting."""
+
+    score: int  # 0-100
+    city: str
+    state_or_country: str | None = None
+    cost_of_living: str | None = None  # "low", "medium", "high", "very high"
+    commute_notes: str | None = None
+    match_reason: str | None = None

@@ -6,8 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.llm.base import LLMResponse
 from src.models import JobPosting
 from src.scraper import firecrawl_client as scraper
+
+# Markdown that passes the _looks_like_job_page heuristic
+_JOB_MARKDOWN = "# Job Posting\nApply now. Requirements: experience with Python. Responsibilities: build things."
 
 # ---------------------------------------------------------------------------
 # _extract_with_claude
@@ -15,51 +19,43 @@ from src.scraper import firecrawl_client as scraper
 
 
 class TestExtractWithClaude:
-    def _mock_claude_response(self, data_dict):
-        """Build a mock anthropic message containing JSON text."""
-        block = MagicMock()
-        block.text = json.dumps(data_dict)
-        message = MagicMock()
-        message.content = [block]
-        return message
+    def _mock_router(self, data_dict):
+        """Build a mock router returning JSON data."""
+        mock_r = MagicMock()
+        mock_r.generate.return_value = LLMResponse(
+            text=json.dumps(data_dict),
+            provider="anthropic",
+            model="claude-haiku-4-5-20251001",
+        )
+        return mock_r
 
     def test_returns_parsed_dict(self, sample_job_data):
-        mock_msg = self._mock_claude_response(sample_job_data)
-        with patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = mock_msg
-
-            result = scraper._extract_with_claude("# Some markdown content")
+        mock_r = self._mock_router(sample_job_data)
+        with patch("src.scraper.firecrawl_client.get_router", return_value=mock_r):
+            result = scraper._extract_with_claude(_JOB_MARKDOWN)
             assert result["title"] == "Senior Data Engineer"
             assert result["company"] == "Acme Corp"
-            mock_client.messages.create.assert_called_once()
+            mock_r.generate.assert_called_once()
 
     def test_passes_markdown_in_prompt(self, sample_job_data):
-        mock_msg = self._mock_claude_response(sample_job_data)
-        with patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = mock_msg
-
-            scraper._extract_with_claude("UNIQUE_MARKDOWN_CONTENT")
-            call_args = mock_client.messages.create.call_args
-            prompt_content = call_args[1]["messages"][0]["content"]
-            assert "UNIQUE_MARKDOWN_CONTENT" in prompt_content
+        mock_r = self._mock_router(sample_job_data)
+        with patch("src.scraper.firecrawl_client.get_router", return_value=mock_r):
+            scraper._extract_with_claude(_JOB_MARKDOWN)
+            call_kwargs = mock_r.generate.call_args[1]
+            messages = call_kwargs["messages"]
+            assert "Apply now" in messages[0]["content"]
 
     def test_invalid_json_raises(self):
-        block = MagicMock()
-        block.text = "not valid json {{"
-        message = MagicMock()
-        message.content = [block]
+        mock_r = MagicMock()
+        mock_r.generate.return_value = LLMResponse(
+            text="not valid json {{",
+            provider="anthropic",
+            model="test",
+        )
 
-        with patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = message
-
-            with pytest.raises(json.JSONDecodeError):
-                scraper._extract_with_claude("some markdown")
+        with patch("src.scraper.firecrawl_client.get_router", return_value=mock_r):
+            with pytest.raises((json.JSONDecodeError, ValueError)):
+                scraper._extract_with_claude(_JOB_MARKDOWN)
 
 
 # ---------------------------------------------------------------------------
@@ -86,33 +82,32 @@ class TestGetClient:
 
 
 class TestScrapeJob:
-    def test_successful_scrape(self, sample_job_data):
-        # Mock Firecrawl response
-        mock_doc = SimpleNamespace(markdown="# Job Posting\nSenior Data Engineer at Acme")
+    def _mock_router(self, data_dict):
+        mock_r = MagicMock()
+        mock_r.generate.return_value = LLMResponse(
+            text=json.dumps(data_dict),
+            provider="anthropic",
+            model="claude-haiku-4-5-20251001",
+        )
+        return mock_r
 
-        # Mock Claude extraction
-        block = MagicMock()
-        block.text = json.dumps(sample_job_data)
-        mock_message = MagicMock()
-        mock_message.content = [block]
+    def test_successful_scrape(self, sample_job_data):
+        mock_doc = SimpleNamespace(markdown=_JOB_MARKDOWN)
+        mock_r = self._mock_router(sample_job_data)
 
         with (
             patch("src.scraper.firecrawl_client.get_client") as mock_get_client,
-            patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic,
+            patch("src.scraper.firecrawl_client.get_router", return_value=mock_r),
         ):
             mock_app = MagicMock()
             mock_app.scrape.return_value = mock_doc
             mock_get_client.return_value = mock_app
 
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = mock_message
-
             job, raw_md = scraper.scrape_job("https://example.com/job")
 
             assert isinstance(job, JobPosting)
             assert job.title == "Senior Data Engineer"
-            assert raw_md == "# Job Posting\nSenior Data Engineer at Acme"
+            assert raw_md == _JOB_MARKDOWN
             mock_app.scrape.assert_called_once()
 
     def test_empty_content_raises(self):
@@ -148,23 +143,16 @@ class TestScrapeJob:
             "benefits": [],
             "application_url": None,
         }
-        mock_doc = SimpleNamespace(markdown="# Job")
-        block = MagicMock()
-        block.text = json.dumps(job_data_no_url)
-        mock_message = MagicMock()
-        mock_message.content = [block]
+        mock_doc = SimpleNamespace(markdown=_JOB_MARKDOWN)
+        mock_r = self._mock_router(job_data_no_url)
 
         with (
             patch("src.scraper.firecrawl_client.get_client") as mock_get_client,
-            patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic,
+            patch("src.scraper.firecrawl_client.get_router", return_value=mock_r),
         ):
             mock_app = MagicMock()
             mock_app.scrape.return_value = mock_doc
             mock_get_client.return_value = mock_app
-
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = mock_message
 
             job, _ = scraper.scrape_job("https://example.com/apply-here")
             assert job.application_url == "https://example.com/apply-here"
@@ -186,23 +174,21 @@ class TestScrapeJob:
 
 class TestScrapeJobWithScroll:
     def test_uses_scroll_actions(self, sample_job_data):
-        mock_doc = SimpleNamespace(markdown="# Scrolled Job Content")
-        block = MagicMock()
-        block.text = json.dumps(sample_job_data)
-        mock_message = MagicMock()
-        mock_message.content = [block]
+        mock_doc = SimpleNamespace(markdown=_JOB_MARKDOWN)
+        mock_r = MagicMock()
+        mock_r.generate.return_value = LLMResponse(
+            text=json.dumps(sample_job_data),
+            provider="anthropic",
+            model="claude-haiku-4-5-20251001",
+        )
 
         with (
             patch("src.scraper.firecrawl_client.get_client") as mock_get_client,
-            patch("src.scraper.firecrawl_client.anthropic") as mock_anthropic,
+            patch("src.scraper.firecrawl_client.get_router", return_value=mock_r),
         ):
             mock_app = MagicMock()
             mock_app.scrape.return_value = mock_doc
             mock_get_client.return_value = mock_app
-
-            mock_client = MagicMock()
-            mock_anthropic.Anthropic.return_value = mock_client
-            mock_client.messages.create.return_value = mock_message
 
             job, raw_md = scraper.scrape_job_with_scroll("https://example.com/scroll-job")
 

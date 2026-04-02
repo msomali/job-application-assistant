@@ -2,14 +2,13 @@
 
 import json
 import logging
-import re
 import subprocess
 from pathlib import Path
 
-import anthropic
 from anthropic import APIError, APITimeoutError, RateLimitError
 
 from src.generator.resume_generator import _find_pdflatex
+from src.llm import get_router, parse_json_response
 from src.models import CoverLetterContent, JobAnalysis, JobPosting
 from src.privacy import PIIGuard
 from src.utils import retry
@@ -62,7 +61,6 @@ def generate_cover_letter_content(
         redact: If True, redact PII before sending to Claude. Default True.
     """
     logger.info("Generating cover letter for %s at %s", job.title, job.company)
-    client = anthropic.Anthropic()
 
     guard = None
     resume_for_llm = master_resume
@@ -74,50 +72,31 @@ def generate_cover_letter_content(
     requirements_text = "\n".join(f"- {r}" for r in job.requirements)
     matching_text = ", ".join(analysis.matching_skills)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        system=[
-            {
-                "type": "text",
-                "text": COVER_LETTER_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"## Candidate Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}",
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
-                            f"Location: {job.location or 'Not specified'}\n"
-                            f"Description: {job.description}\n\n"
-                            f"## Key Requirements\n{requirements_text}\n\n"
-                            f"## Candidate's Matching Skills\n{matching_text}\n\n"
-                            f"## Tailoring Strategy\n{analysis.tailoring_strategy}"
-                        ),
-                    },
-                ],
-            }
-        ],
+    cached_content = f"## Candidate Profile\n{json.dumps(resume_for_llm, separators=(',', ':'))}"
+    variable_content = (
+        f"## Job Posting\nTitle: {job.title}\nCompany: {job.company}\n"
+        f"Location: {job.location or 'Not specified'}\n"
+        f"Description: {job.description}\n\n"
+        f"## Key Requirements\n{requirements_text}\n\n"
+        f"## Candidate's Matching Skills\n{matching_text}\n\n"
+        f"## Tailoring Strategy\n{analysis.tailoring_strategy}"
     )
 
-    response_text = message.content[0].text.strip()
-    # Strip markdown code fences if present
-    response_text = re.sub(r"^\s*```(?:json)?\s*", "", response_text)
-    response_text = re.sub(r"\s*```\s*$", "", response_text)
+    router = get_router()
+    response = router.generate_with_cache(
+        task="cover_letter",
+        system=COVER_LETTER_SYSTEM_PROMPT,
+        cached_content=cached_content,
+        variable_content=variable_content,
+        max_tokens=2000,
+    )
+
+    response_text = response.text
     if guard:
         response_text = guard.restore(response_text)
 
-    data = json.loads(response_text)
-    logger.info("Cover letter content generated successfully")
+    data = parse_json_response(response_text)
+    logger.info("Cover letter content generated successfully (provider=%s)", response.provider)
     return CoverLetterContent(**data)
 
 

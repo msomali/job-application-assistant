@@ -2,6 +2,20 @@
 
 An automated job application pipeline that scrapes job listings, analyzes fit against your resume, generates tailored resumes and cover letters as PDFs, and optionally auto-fills application forms using browser automation. Notifications and human-in-the-loop approval happen through a Telegram bot.
 
+## Quickstart
+
+```bash
+git clone <repo-url> && cd job-application-assistant
+make setup       # Interactive: installs deps, copies config files, prompts for API keys
+make verify      # Confirms everything is set up correctly
+job discover     # Run your first job search
+```
+
+> **Prerequisites:** Python 3.11+ and [MacTeX](https://www.tug.org/mactex/) (for PDF generation).
+> Telegram keys are optional if you only want CLI usage.
+
+For manual setup or more details, see [Setup](#setup) below.
+
 ## How It Works
 
 1. **Discover** — Firecrawl scrapes job listings from configured search queries and career pages
@@ -19,20 +33,26 @@ PII is automatically redacted before sending data to the LLM and restored in the
 
 ## Setup
 
+The fastest way to get started is `make setup` (see [Quickstart](#quickstart)). For manual setup:
+
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd job-application-assistant
 
-# Install the package and dev dependencies
+# Install the package with dev dependencies
 pip install -e ".[dev]"
 
 # Install Playwright browsers (needed for auto-apply)
 playwright install chromium
 
-# Create your .env file
+# Copy example config files
 cp .env.example .env
-# Edit .env with your API keys (see below)
+cp data/config.example.yaml data/config.yaml
+cp data/master_resume.example.json data/master_resume.json
+cp data/search_config.example.json data/search_config.json
+cp data/screening_answers.example.json data/screening_answers.json
+
+# Edit each file with your data and API keys
 ```
 
 ### Environment Variables
@@ -236,20 +256,24 @@ python scripts/daily_discover.py
 ## Development
 
 ```bash
-# Run all tests
-pytest -v --tb=short
+make check       # Run all checks (lint + typecheck + test)
+make test        # Tests only
+make lint        # Lint only
+make format      # Auto-format with ruff
+make typecheck   # mypy type checking
 
-# Run a single test file
-pytest tests/test_scraper.py
+# Or run individually:
+pytest -v --tb=short          # All tests
+pytest tests/test_scraper.py  # Single file
+pytest -k "test_name"         # Single test
+ruff check src/ tests/        # Lint
+mypy src/                     # Type check
+```
 
-# Run a single test by name
-pytest -k "test_name"
+Pre-commit hooks are installed automatically by `make dev` or `make setup`. To install manually:
 
-# Lint
-ruff check src/ tests/
-
-# Type check
-mypy src/
+```bash
+pre-commit install
 ```
 
 ## Project Structure

@@ -28,6 +28,7 @@ job apply <job_id>            # Browser automation to fill application forms
 job skills top|roles|trends|gaps
 job answers list|search|add|delete|import|stats
 job calibrate                 # Score calibration report
+job enrich <job_id>           # Enrich company data via Google Search grounding (requires GOOGLE_API_KEY)
 
 # Lint
 ruff check src/ tests/
@@ -48,15 +49,21 @@ mypy src/
 ```
 src/
 ├── main.py              # Click CLI entry point (registered as `job`)
-├── models.py            # Pydantic models: JobPosting, JobAnalysis, ResumeContent, CoverLetterContent, ScorePenalty
+├── models.py            # Pydantic models: JobPosting, JobAnalysis, ResumeContent, CoverLetterContent, CompanyEnrichment, LocationScore
 ├── batch.py             # Anthropic Batch API for async bulk analysis (50% cost savings)
+├── llm/
+│   ├── __init__.py          # Re-exports get_router(), parse_json_response()
+│   ├── base.py              # LLMResponse dataclass, parse_json_response(), LLMProvider ABC
+│   ├── anthropic_provider.py # Claude provider with cache_control optimization
+│   ├── gemini_provider.py   # Gemini provider with Google Search grounding
+│   └── router.py            # Config-driven task routing with automatic fallback
 ├── scraper/
-│   ├── firecrawl_client.py   # Firecrawl scraping + Haiku extraction fallback
+│   ├── firecrawl_client.py   # Firecrawl scraping + LLM extraction via router
 │   └── job_discovery.py      # Search, crawl, discover_all from config
 ├── analyzer/
-│   └── job_analyzer.py       # Claude-powered fit scoring with penalty system (base_score + adjustments)
+│   └── job_analyzer.py       # LLM-powered fit scoring with penalty system (base_score + adjustments)
 ├── generator/
-│   ├── resume_generator.py   # Claude generates content → LaTeX → pdflatex → PDF
+│   ├── resume_generator.py   # LLM generates content → LaTeX → pdflatex → PDF
 │   └── cover_letter_generator.py
 ├── templates/
 │   ├── resume.tex            # LaTeX templates (content injected at render time)
@@ -84,11 +91,12 @@ src/
 - **PDF generation**: Claude returns structured Pydantic models → content injected into LaTeX templates → compiled with `pdflatex`. Requires MacTeX installed.
 - **Answer cache**: SQLite-backed with SHA-256 hash for exact lookup + SequenceMatcher fuzzy fallback (0.75 threshold).
 - **Skill analytics**: Extracted from existing analysis data (no extra LLM calls) into `job_skills` table on every `save_analysis()`.
-- **API cost optimizations**: (1) Prompt caching (`cache_control: ephemeral`) on system prompts and resume content across all API calls — 90% discount on cached tokens. (2) Model tiering — Haiku for job extraction, Sonnet for analysis/generation. (3) Batch API for bulk discovery analysis — 50% discount. (4) Minified JSON (`separators=(',',':')`) for resume data sent to Claude.
+- **Multi-LLM routing**: `src/llm/router.py` routes tasks to providers based on `data/config.yaml` `llm.routing` section. All defaults to Anthropic — zero change until user opts in. Gemini available for company enrichment (Google Search grounding) and cost-effective extraction. Automatic fallback to Anthropic if Gemini fails. Providers are lazily initialized.
+- **API cost optimizations**: (1) Prompt caching (`cache_control: ephemeral`) on system prompts and resume content across all Anthropic calls — 90% discount on cached tokens. (2) Model tiering — Haiku for job extraction, Sonnet for analysis/generation. (3) Batch API for bulk discovery analysis — 50% discount. (4) Minified JSON (`separators=(',',':')`) for resume data sent to LLM. (5) Gemini `response_mime_type="application/json"` for structured output without code fences.
 
 ## Environment
 
-Requires `.env` with: `FIRECRAWL_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`. See `.env.example`.
+Requires `.env` with: `FIRECRAWL_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`. Optional: `GOOGLE_API_KEY` (for Gemini multi-LLM support). See `.env.example`.
 
 ## Testing
 

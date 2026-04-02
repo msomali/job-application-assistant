@@ -1,14 +1,12 @@
 """Firecrawl client for scraping job postings."""
 
-import json
 import logging
 import os
-import re
 
-import anthropic
 from anthropic import APIError, APITimeoutError, RateLimitError
 from firecrawl import FirecrawlApp
 
+from src.llm import get_router, parse_json_response
 from src.models import JobPosting
 from src.utils import retry
 
@@ -21,6 +19,8 @@ _JOB_SIGNALS = [
     "we are looking for", "about the role", "what you'll do",
     "what you will do", "who you are", "about this role",
     "your responsibilities", "minimum qualifications", "preferred qualifications",
+    # LinkedIn-specific signals (scraped via Playwright)
+    "**company:**", "## description", "easy apply", "**location:**",
 ]
 
 
@@ -29,8 +29,6 @@ def _looks_like_job_page(markdown: str) -> bool:
     sample = markdown[:4000].lower()
     matches = sum(1 for signal in _JOB_SIGNALS if signal in sample)
     return matches >= 2
-
-EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
 
 EXTRACT_SYSTEM_PROMPT = """\
 Extract all job posting details from the provided page content.
@@ -72,26 +70,19 @@ def _extract_with_claude(markdown: str) -> dict:
 
     # Cap input to avoid large token usage
     truncated = markdown[:12000]
-    logger.debug("Extracting job data with Claude (markdown length: %d)", len(truncated))
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=EXTRACTION_MODEL,
-        max_tokens=3000,
-        system=[
-            {
-                "type": "text",
-                "text": EXTRACT_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
+    logger.debug("Extracting job data with LLM (markdown length: %d)", len(truncated))
+
+    router = get_router()
+    response = router.generate(
+        task="extraction",
+        system=EXTRACT_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": truncated}],
+        max_tokens=3000,
+        cache_system=True,
     )
-    logger.debug("Claude extraction complete")
-    raw = message.content[0].text.strip()
-    # Strip markdown code fences if present
-    raw = re.sub(r"^\s*```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```\s*$", "", raw)
-    data = json.loads(raw)
+
+    logger.debug("Extraction complete (provider=%s)", response.provider)
+    data = parse_json_response(response.text)
 
     # Validate required fields
     if not data.get("title") or not data.get("company"):
