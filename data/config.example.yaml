@@ -34,6 +34,14 @@ telegram:
 matching:
   fuzzy_threshold: 0.75       # Similarity threshold for fuzzy answer matching, 0.0-1.0 (default: 0.75)
 
+# --- Indeed Search ---
+# Filters applied to Indeed job searches (via `job search-indeed` or /indeed bot command).
+indeed:
+  location: ""                # City/state filter, e.g. "San Francisco, CA" (default: empty = any)
+  fromage: ""                 # Date posted filter: "24h", "3d", "week", "14d", "month" (default: empty = any time)
+  remote: ""                  # Set to "true" to filter for remote jobs only (default: empty = all)
+  sort: ""                    # Sort order: "date" for newest first (default: empty = relevance)
+
 # --- Multi-LLM Support ---
 # Route tasks to different providers. All default to Anthropic (zero change until you opt in).
 # Set GOOGLE_API_KEY in .env to enable Gemini.

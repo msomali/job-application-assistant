@@ -38,6 +38,12 @@ _DEFAULTS: dict[str, Any] = {
     "matching": {
         "fuzzy_threshold": 0.75,
     },
+    "indeed": {
+        "location": "",
+        "fromage": "",
+        "remote": "",
+        "sort": "",
+    },
     "llm": {
         "default_provider": "anthropic",
         "providers": {

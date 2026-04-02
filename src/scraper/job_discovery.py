@@ -65,10 +65,7 @@ def _should_skip_url(url: str) -> bool:
         logger.debug("Skipping LinkedIn URL (no session): %s", url)
         return True
     if "indeed.com" in domain:
-        if has_session("indeed"):
-            return False
-        logger.debug("Skipping Indeed URL (no session): %s", url)
-        return True
+        return False  # Indeed doesn't require login
 
     # Skip job board aggregators
     if any(skip in domain for skip in SKIP_DOMAINS):
@@ -126,6 +123,15 @@ def scrape_search_result(url: str) -> str | None:
             return scrape_linkedin_job(url)
         except Exception as e:
             logger.warning("LinkedIn scrape failed for %s: %s", url, e)
+            return None
+
+    # Route Indeed URLs through the Indeed scraper
+    if "indeed.com" in domain:
+        try:
+            from src.scraper.indeed import scrape_indeed_job
+            return scrape_indeed_job(url)
+        except Exception as e:
+            logger.warning("Indeed scrape failed for %s: %s", url, e)
             return None
 
     app = get_client()

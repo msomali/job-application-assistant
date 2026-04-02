@@ -457,6 +457,69 @@ async def tool_linkedin_search(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@tool(
+    "indeed_search",
+    "Search Indeed for jobs matching a query. "
+    "No login required — but a saved session (job login --site indeed) helps bypass Cloudflare. "
+    "Scrapes Indeed's job search UI via Playwright and analyzes each result.",
+    {"query": str, "limit": int},
+)
+async def tool_indeed_search(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    query_str = args["query"]
+    limit = args.get("limit", 10)
+
+    from src.scraper.indeed import scrape_indeed_job, search_indeed
+
+    try:
+        results = search_indeed(query_str, limit=limit)
+    except RuntimeError as e:
+        return {"content": [{"type": "text", "text": str(e)}]}
+
+    new_jobs = []
+    for result in results:
+        url = result["url"]
+        try:
+            markdown = scrape_indeed_job(url)
+        except Exception as e:
+            logger.debug("Failed to scrape Indeed job %s: %s", url, e)
+            continue
+
+        if not markdown:
+            continue
+
+        try:
+            extracted = _extract_with_claude(markdown)
+            job = JobPosting(**extracted)
+        except Exception as e:
+            logger.debug("Skipping unparseable Indeed job %s: %s", url, e)
+            continue
+
+        job_id = save_job(job.model_dump(), url, markdown)
+        analysis = analyze_job(job)
+        save_analysis(job_id, analysis.model_dump())
+
+        new_jobs.append({
+            "id": job_id,
+            "title": job.title,
+            "company": job.company,
+            "fit_score": analysis.fit_score,
+        })
+
+    logger.info("tool_indeed_search found %d jobs for: %s", len(new_jobs), query_str)
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {"query": query_str, "source": "indeed", "jobs_found": len(new_jobs), "jobs": new_jobs},
+                    indent=2,
+                ),
+            }
+        ]
+    }
+
+
 # --- Agent setup ---
 
 
@@ -469,6 +532,7 @@ def create_tools_server():
             tool_discover_jobs,
             tool_search_and_analyze,
             tool_linkedin_search,
+            tool_indeed_search,
             tool_scrape_and_analyze,
             tool_generate_documents,
             tool_list_top_jobs,
@@ -487,6 +551,7 @@ You have the following tools:
 - discover_jobs: Run all configured searches and crawls to find new jobs
 - search_and_analyze: Search for jobs with a specific query
 - linkedin_search: Search LinkedIn directly (requires saved LinkedIn session)
+- indeed_search: Search Indeed directly (no login required)
 - scrape_and_analyze_url: Scrape and analyze a single job URL
 - generate_documents: Generate a tailored resume and cover letter for a job
 - list_top_jobs: List top-ranked jobs by fit score

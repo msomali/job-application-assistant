@@ -110,6 +110,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/discover - Run job discovery pipeline + send digest\n"
         "/search <query> - Search for jobs with a query\n"
         "/linkedin <query> - Search LinkedIn directly\n"
+        "/indeed <query> - Search Indeed directly\n"
         "/scrape <url> - Scrape and analyze a single job URL\n"
         "/paste [url] - Paste a job description (for LinkedIn etc.)\n\n"
         "*Browse:*\n"
@@ -552,6 +553,79 @@ async def cmd_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("LinkedIn search failed: %s", query_str)
         await update.message.reply_text(f"LinkedIn search failed: {e}")
+
+
+async def cmd_indeed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Search Indeed for jobs."""
+    if not _is_authorized(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /indeed <search query>")
+        return
+    rate_msg = _check_rate_limit(update.effective_user.id)
+    if rate_msg:
+        await update.message.reply_text(rate_msg)
+        return
+
+    query_str = " ".join(context.args)
+
+    init_db()
+    await update.message.reply_text(f"Searching Indeed: {query_str}")
+
+    try:
+        from src.analyzer.job_analyzer import analyze_job
+        from src.scraper.firecrawl_client import _extract_with_claude
+        from src.scraper.indeed import scrape_indeed_job_async, search_indeed_async
+
+        limit = cfg("discovery", "search_limit", 5)
+        results = await search_indeed_async(query_str, limit=limit)
+        if not results:
+            await update.message.reply_text("No Indeed jobs found.")
+            return
+
+        lines = [f"*Indeed: {len(results)} results*\n"]
+        for result in results:
+            url = result["url"]
+            try:
+                markdown = await scrape_indeed_job_async(url)
+                if not markdown:
+                    logger.warning("Empty markdown from Indeed scrape: %s", url)
+                    continue
+                try:
+                    extracted = _extract_with_claude(markdown)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "Claude extraction failed for %s (%s), using card data", url, exc
+                    )
+                    extracted = {
+                        "title": result.get("title", "Unknown"),
+                        "company": result.get("company", "Unknown"),
+                        "location": result.get("location", ""),
+                        "description": markdown,
+                    }
+                from src.models import JobPosting
+
+                job = JobPosting(**extracted)
+                job_id = save_job(job.model_dump(), url, markdown)
+                analysis = analyze_job(job)
+                save_analysis(job_id, analysis.model_dump())
+                lines.append(
+                    f"`{job_id:>3}` | {analysis.fit_score:>3}% | "
+                    f"{_md_escape(job.title[:25])} @ {_md_escape(job.company[:15])}"
+                )
+            except Exception as e:
+                logger.warning("Indeed scrape/analysis failed for %s: %s", url, e)
+                continue
+
+        if len(lines) > 1:
+            lines.append("\nUse /job <id> for details.")
+            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        else:
+            await update.message.reply_text("Could not parse any Indeed results.")
+
+    except Exception as e:
+        logger.exception("Indeed search failed: %s", query_str)
+        await update.message.reply_text(f"Indeed search failed: {e}")
 
 
 async def cmd_scrape(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1399,6 +1473,7 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("discover", cmd_discover))
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("linkedin", cmd_linkedin))
+    app.add_handler(CommandHandler("indeed", cmd_indeed))
     app.add_handler(CommandHandler("scrape", cmd_scrape))
     app.add_handler(CommandHandler("paste", cmd_paste))
     app.add_handler(CommandHandler("cancel", cmd_cancel))

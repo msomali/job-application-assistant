@@ -28,6 +28,7 @@ job apply <job_id>            # Browser automation to fill application forms
 job skills top|roles|trends|gaps
 job answers list|search|add|delete|import|stats
 job calibrate                 # Score calibration report
+job search-indeed <query>     # Search Indeed for jobs via Playwright (no login required)
 job enrich <job_id>           # Enrich company data via Google Search grounding (requires GOOGLE_API_KEY)
 
 # Lint
@@ -59,6 +60,7 @@ src/
 │   └── router.py            # Config-driven task routing with automatic fallback
 ├── scraper/
 │   ├── firecrawl_client.py   # Firecrawl scraping + LLM extraction via router
+│   ├── indeed.py             # Indeed job search/scrape via Playwright (no login required)
 │   └── job_discovery.py      # Search, crawl, discover_all from config
 ├── analyzer/
 │   └── job_analyzer.py       # LLM-powered fit scoring with penalty system (base_score + adjustments)
@@ -75,7 +77,7 @@ src/
 ├── agent/
 │   ├── agent.py              # Claude Agent SDK autonomous loop with 9 tools
 │   ├── computer_use.py       # Playwright browser automation driven by Claude screenshots
-│   └── telegram_bot.py       # Notifications + /start /jobs /top /skills /calibrate commands
+│   └── telegram_bot.py       # Notifications + /start /jobs /top /skills /calibrate /indeed commands
 └── utils.py
 ```
 

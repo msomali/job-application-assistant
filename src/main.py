@@ -286,6 +286,57 @@ def search_linkedin(query: str, limit: int, analyze_all: bool):
     click.echo("Done!")
 
 
+@cli.command("search-indeed")
+@click.argument("query")
+@click.option("--limit", default=25, help="Number of results")
+@click.option("--analyze-all", is_flag=True, help="Analyze all discovered jobs")
+def search_indeed(query: str, limit: int, analyze_all: bool):
+    """Search Indeed for jobs (no login required, session optional)."""
+    from src.scraper.indeed import search_indeed as _search_indeed
+
+    click.echo(f"Searching Indeed: {query}")
+
+    try:
+        results = _search_indeed(query, limit=limit)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}")
+        return
+
+    click.echo(f"Found {len(results)} Indeed jobs")
+
+    for result in results:
+        url = result["url"]
+        click.echo(f"  Scraping: {result.get('title', url)}")
+
+        try:
+            from src.scraper.indeed import scrape_indeed_job
+
+            markdown = scrape_indeed_job(url)
+        except Exception as e:
+            click.echo(f"  Skipping (scrape error): {e}")
+            continue
+
+        if not markdown:
+            continue
+
+        try:
+            extracted = _extract_with_claude(markdown)
+            job = JobPosting(**extracted)
+        except Exception as e:
+            click.echo(f"  Skipping (parse error): {e}")
+            continue
+
+        job_id = save_job(job.model_dump(), url, markdown)
+        click.echo(f"  [{job_id}] {job.title} at {job.company} ({job.location})")
+
+        if analyze_all:
+            analysis = analyze_job(job)
+            save_analysis(job_id, analysis.model_dump())
+            click.echo(f"       Fit: {analysis.fit_score}/100")
+
+    click.echo("Done!")
+
+
 @cli.command()
 @click.argument("url")
 @click.option("--limit", default=cfg("discovery", "crawl_limit", 20), help="Max pages to crawl")
