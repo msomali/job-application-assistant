@@ -45,7 +45,7 @@ export function Component() {
           value={location}
           onChange={(e) => setLocation(e.target.value)}
         />
-        <Select value={source} onValueChange={(v: string) => setSource(v as "indeed" | "linkedin")}>
+        <Select value={source} onValueChange={(v: string | null) => setSource((v ?? "indeed") as "indeed" | "linkedin")}>
           <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="indeed">Indeed</SelectItem>

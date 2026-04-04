@@ -117,8 +117,6 @@ export function Component() {
     }
   }
 
-  const configs = (configsQuery.data ?? []) as any[];
-
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
@@ -181,7 +179,7 @@ export function Component() {
               <Label>Type</Label>
               <Select
                 value={form.watch("config_type")}
-                onValueChange={(v: string) => form.setValue("config_type", v)}
+                onValueChange={(v: string | null) => form.setValue("config_type", v ?? "search_query")}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>

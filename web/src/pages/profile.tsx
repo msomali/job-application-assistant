@@ -29,16 +29,6 @@ interface ProfileFormData {
   certifications: string;
 }
 
-const DEFAULT_VALUES: ProfileFormData = {
-  full_name: "",
-  contact: { email: "", phone: "", linkedin: "", github: "", website: "" },
-  summary: "",
-  experience: [],
-  education: [],
-  skills: "",
-  certifications: "",
-};
-
 function buildFormValues(p: any): ProfileFormData {
   return {
     full_name: p?.full_name ?? "",

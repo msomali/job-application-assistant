@@ -52,7 +52,6 @@ export function Component() {
   });
 
   const jobs = (jobsQuery.data ?? []) as any[];
-  const ranked = (rankedQuery.data ?? []) as any[];
   const gaps = (skillGapsQuery.data ?? []) as any[];
   const totalJobs = jobs.length;
   const topGap = gaps[0]?.skill ?? "—";
