@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,13 +11,43 @@ from src.app import create_app
 from src.deps import get_db_session
 
 
+class MockResult:
+    """Mock SQLAlchemy result that supports scalar_one_or_none etc."""
+
+    def __init__(self, value=None):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+    def scalar_one(self):
+        return self._value
+
+    def scalar(self):
+        return self._value
+
+    def unique(self):
+        return self
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+    def first(self):
+        return self._value
+
+
 @pytest.fixture
 def mock_session():
     """Mock async DB session."""
     session = AsyncMock()
-    session.execute = AsyncMock()
+    session.execute = AsyncMock(return_value=MockResult(None))
     session.commit = AsyncMock()
+    session.flush = AsyncMock()
     session.close = AsyncMock()
+    session.refresh = AsyncMock()
     return session
 
 
