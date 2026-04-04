@@ -1,4 +1,4 @@
-.PHONY: infra infra-down migrate test lint migration db-reset
+.PHONY: infra infra-down migrate test test-api test-all lint migration db-reset api-dev worker-dev
 
 infra:
 	docker compose up -d
@@ -18,6 +18,19 @@ lint:
 migration:
 	@read -p "Migration message: " msg; \
 	alembic revision --autogenerate -m "$$msg"
+
+api-dev:
+	cd api && uvicorn src.app:app --reload --port 8000
+
+worker-dev:
+	cd api && celery -A src.workers.celery_app worker --loglevel=info --concurrency=2
+
+test-api:
+	cd api && pytest -v --tb=short
+
+test-all:
+	cd core && pytest -v --tb=short
+	cd api && pytest -v --tb=short
 
 db-reset:
 	docker compose exec postgres psql -U jobapp -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
