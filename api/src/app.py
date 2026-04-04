@@ -55,11 +55,15 @@ def create_app() -> FastAPI:
     )
 
     # API routes
+    from src.routes.discovery import router as discovery_router
     from src.routes.jobs import router as jobs_router
     from src.routes.profile import router as profile_router
+    from src.routes.search import router as search_router
     from src.routes.tasks import router as tasks_router
     app.include_router(profile_router)
     app.include_router(jobs_router)
+    app.include_router(discovery_router)
+    app.include_router(search_router)
     app.include_router(tasks_router)
 
     @app.get("/healthz")
