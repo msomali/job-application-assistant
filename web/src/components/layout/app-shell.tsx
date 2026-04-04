@@ -1,4 +1,5 @@
 import { Outlet, useLocation } from "react-router";
+import { useTaskStream } from "@/hooks/use-task-stream";
 import { IconRail } from "./icon-rail";
 import { TopBar } from "./top-bar";
 
@@ -19,6 +20,7 @@ const pageTitles: Record<string, string> = {
 
 export function AppShell() {
   const location = useLocation();
+  useTaskStream();
   const title =
     pageTitles[location.pathname] ??
     Object.entries(pageTitles).find(([prefix]) => location.pathname.startsWith(prefix))?.[1] ??
