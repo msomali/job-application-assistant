@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.backend import current_active_user
-from src.db.models import Task as TaskModel, User
+from src.db.models import Task as TaskModel
+from src.db.models import User
 from src.db.pg import set_tenant_context
 from src.deps import get_db_session
 from src.schemas import TaskRead

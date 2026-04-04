@@ -4,7 +4,6 @@ import uuid
 
 from fastapi import Request
 from fastapi_users import BaseUserManager, UUIDIDMixin
-from sqlalchemy import text
 
 from src.db.models import Tenant, User, UserProfile
 

@@ -10,7 +10,8 @@ import redis
 from sqlalchemy import select
 
 from src.config import settings
-from src.db.models import Analysis, Job, Task as TaskModel, UserProfile
+from src.db.models import Analysis, Job, UserProfile
+from src.db.models import Task as TaskModel
 from src.db.pg import get_session_factory, set_tenant_context
 from src.workers.celery_app import celery_app
 

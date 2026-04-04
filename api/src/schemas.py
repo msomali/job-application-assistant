@@ -6,7 +6,6 @@ from datetime import datetime
 from fastapi_users import schemas
 from pydantic import BaseModel
 
-
 # --- Auth schemas (fastapi-users) ---
 
 class UserRead(schemas.BaseUser[uuid.UUID]):

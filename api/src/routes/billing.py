@@ -1,6 +1,6 @@
 """Billing endpoints — plan, usage, history (stubs until Stripe)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -38,7 +38,7 @@ async def get_usage(
     user: User = Depends(current_active_user),
 ):
     await set_tenant_context(session, str(user.tenant_id))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     result = await session.execute(
@@ -67,7 +67,7 @@ async def usage_history(
     user: User = Depends(current_active_user),
 ):
     await set_tenant_context(session, str(user.tenant_id))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
         select(
             func.date_trunc("day", ApiUsageLog.created_at).label("day"),

@@ -13,7 +13,6 @@ from src.config import settings
 from src.db.models import User
 from src.deps import get_db_session
 
-
 bearer_transport = BearerTransport(tokenUrl="/api/auth/login")
 
 

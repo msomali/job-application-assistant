@@ -1,6 +1,5 @@
 """Task status and SSE streaming endpoints."""
 
-import asyncio
 import json
 import logging
 import uuid
