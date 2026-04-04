@@ -1,0 +1,77 @@
+"""Task status and SSE streaming endpoints."""
+
+import asyncio
+import json
+import logging
+import uuid
+
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from src.auth.backend import current_active_user
+from src.config import settings
+from src.db.models import Task as TaskModel
+from src.db.models import User
+from src.db.pg import set_tenant_context
+from src.deps import get_db_session
+from src.schemas import TaskRead
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+
+@router.get("/{task_id}", response_model=TaskRead)
+async def get_task(
+    task_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    user: User = Depends(current_active_user),
+):
+    await set_tenant_context(session, str(user.tenant_id))
+    result = await session.execute(
+        select(TaskModel).where(TaskModel.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+@router.get("", response_model=list[TaskRead])
+async def list_tasks(
+    limit: int = 20,
+    session: AsyncSession = Depends(get_db_session),
+    user: User = Depends(current_active_user),
+):
+    await set_tenant_context(session, str(user.tenant_id))
+    result = await session.execute(
+        select(TaskModel).order_by(TaskModel.created_at.desc()).limit(limit)
+    )
+    return result.scalars().all()
+
+
+@router.get("/stream")
+async def task_stream(user: User = Depends(current_active_user)):
+    """SSE endpoint — streams task events for the current tenant."""
+    tenant_id = str(user.tenant_id)
+
+    async def event_generator():
+        r = aioredis.from_url(settings.redis_url)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(f"tenant:{tenant_id}:events")
+        try:
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
+                if message and message["type"] == "message":
+                    data = json.loads(message["data"])
+                    yield {"event": data["event"], "data": json.dumps(data["data"])}
+                else:
+                    # Send keepalive
+                    yield {"event": "ping", "data": ""}
+        finally:
+            await pubsub.unsubscribe(f"tenant:{tenant_id}:events")
+            await r.aclose()
+
+    return EventSourceResponse(event_generator())
