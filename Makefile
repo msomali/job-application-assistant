@@ -1,4 +1,4 @@
-.PHONY: infra infra-down migrate test test-api test-all lint migration db-reset api-dev worker-dev
+.PHONY: infra infra-down migrate test test-api test-all lint migration db-reset api-dev worker-dev web-dev web-build web-test web-install
 
 infra:
 	docker compose up -d
@@ -35,3 +35,15 @@ test-all:
 db-reset:
 	docker compose exec postgres psql -U jobapp -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 	alembic upgrade head
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
+
+web-test:
+	cd web && npx vitest run
+
+web-install:
+	cd web && npm install
