@@ -194,6 +194,14 @@ def upgrade() -> None:
     )
     op.create_index("idx_usage_tenant_date", "api_usage_log", ["tenant_id", "created_at"])
 
+    # --- API role (non-superuser, subject to RLS) ---
+    op.execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jobapp_api') THEN CREATE ROLE jobapp_api WITH LOGIN PASSWORD 'jobapp_dev'; END IF; END $$")
+    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO jobapp_api")
+    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO jobapp_api")
+    op.execute("GRANT USAGE ON SCHEMA public TO jobapp_api")
+    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO jobapp_api")
+    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO jobapp_api")
+
     # --- RLS policies ---
     for table in RLS_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
