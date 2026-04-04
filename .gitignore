@@ -47,5 +47,17 @@ data/browser_sessions/
 .claude/
 CLAUDE.md
 
+# Superpowers brainstorm sessions
+.superpowers/
+
+# Node (web/)
+web/node_modules/
+web/dist/
+
+# Docker volumes (local)
+postgres_data/
+redis_data/
+minio_data/
+
 # Misc
 .context/
