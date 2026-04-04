@@ -1,67 +1,15 @@
 [project]
 name = "job-application-assistant"
 version = "0.1.0"
-description = "Automated job application pipeline: scrape, analyze, generate tailored resumes & cover letters"
+description = "Automated job application pipeline — monorepo workspace"
 requires-python = ">=3.11"
 dependencies = [
-    "firecrawl-py==4.19.0",
-    "anthropic==0.86.0",
-    "pydantic==2.12.5",
-    "sqlite-utils==3.39",
-    "click==8.3.1",
-    "claude-agent-sdk==0.1.50",
-    "python-telegram-bot==22.7",
-    "playwright==1.58.0",
-    "python-dotenv==1.2.2",
-    "pyyaml>=6.0",
-    "Pillow>=10.0",
-    "google-genai>=1.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "ruff>=0.4",
-    "mypy>=1.10",
-    "pre-commit>=4.0",
+    "job-core @ file:///./core",
 ]
 
 [project.scripts]
-job = "src.main:cli"
-
-[tool.setuptools.packages.find]
-where = ["."]
+job = "cli.main:cli"
 
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-asyncio_mode = "auto"
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "S", "B", "UP"]
-ignore = [
-    "S608",   # SQL injection — we use column whitelisting
-    "S603",   # subprocess calls — paths are validated
-    "S110",   # try-except-pass — used intentionally in discovery loops
-    "S112",   # try-except-continue — used intentionally in discovery loops
-    "E501",   # line-too-long — handled by formatter
-    "E402",   # module-import-not-at-top — needed for dotenv loading
-]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # assert is fine in tests
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false

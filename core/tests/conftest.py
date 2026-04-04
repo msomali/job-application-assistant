@@ -8,7 +8,7 @@ import pytest
 
 from src.db.database import init_db
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
 
 @pytest.fixture()

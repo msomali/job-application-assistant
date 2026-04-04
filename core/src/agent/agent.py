@@ -40,7 +40,7 @@ from src.models import JobAnalysis, JobPosting
 from src.scraper.firecrawl_client import _extract_with_claude, scrape_job
 from src.scraper.job_discovery import discover_all, scrape_search_result, search_jobs
 
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
+OUTPUT_DIR = Path(__file__).parent.parent.parent.parent / "output"
 
 
 # --- Tool definitions ---
@@ -618,7 +618,7 @@ async def run_daily_pipeline() -> None:
 if __name__ == "__main__":
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+    load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 
     if len(sys.argv) > 1:
         prompt = " ".join(sys.argv[1:])

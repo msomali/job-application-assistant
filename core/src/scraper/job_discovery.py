@@ -13,7 +13,7 @@ from src.utils import retry
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent.parent / "data" / "search_config.json"
+CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "data" / "search_config.json"
 
 # Job board aggregator URLs we should skip (they list jobs, not individual postings)
 SKIP_DOMAINS = set(cfg("discovery", "skip_domains", [

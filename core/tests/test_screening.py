@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-SCREENING_PATH = Path(__file__).parent.parent / "data" / "screening_answers.json"
+SCREENING_PATH = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
 
 
 @pytest.fixture()

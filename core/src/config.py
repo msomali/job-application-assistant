@@ -9,7 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "data" / "config.yaml"
+CONFIG_PATH = Path(__file__).parent.parent.parent / "data" / "config.yaml"
 
 # Hardcoded defaults — used when config.yaml is missing or incomplete
 _DEFAULTS: dict[str, Any] = {

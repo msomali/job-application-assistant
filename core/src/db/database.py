@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "jobs.db"
 
 
 def get_connection() -> sqlite3.Connection:

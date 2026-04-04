@@ -51,7 +51,7 @@ _paste_waiting: dict[int, str] = {}
 _last_heavy_cmd: dict[int, float] = {}
 _HEAVY_CMD_COOLDOWN = 30  # seconds between discover/search/apply
 
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
+OUTPUT_DIR = Path(__file__).parent.parent.parent.parent / "output"
 
 
 def _md_escape(text) -> str:
@@ -1023,7 +1023,7 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from src.models import JobAnalysis, JobPosting
 
     master_resume = load_master_resume()
-    output_dir = Path(__file__).parent.parent.parent / "output"
+    output_dir = Path(__file__).parent.parent.parent.parent / "output"
 
     for arg in context.args:
         try:
@@ -1506,7 +1506,7 @@ if __name__ == "__main__":
 
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+    load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 
     from src.logging_config import setup_logging
 

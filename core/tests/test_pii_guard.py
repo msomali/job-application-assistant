@@ -256,8 +256,8 @@ class TestFromRealFiles:
     """Test with actual project data files if available."""
 
     def test_loads_real_resume(self):
-        resume_path = Path(__file__).parent.parent / "data" / "master_resume.json"
-        screening_path = Path(__file__).parent.parent / "data" / "screening_answers.json"
+        resume_path = Path(__file__).parent.parent.parent / "data" / "master_resume.json"
+        screening_path = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
         if not resume_path.exists():
             pytest.skip("Real data files not available")
 

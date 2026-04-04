@@ -17,8 +17,8 @@ from src.utils import retry
 
 logger = logging.getLogger(__name__)
 
-MASTER_RESUME_PATH = Path(__file__).parent.parent.parent / "data" / "master_resume.json"
-SCREENING_PATH = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
+MASTER_RESUME_PATH = Path(__file__).parent.parent.parent.parent / "data" / "master_resume.json"
+SCREENING_PATH = Path(__file__).parent.parent.parent.parent / "data" / "screening_answers.json"
 
 
 def _find_pdflatex() -> str:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from src.logging_config import setup_logging
 
@@ -55,7 +55,7 @@ from src.scraper.job_discovery import (
     search_jobs,
 )
 
-OUTPUT_DIR = Path(__file__).parent.parent / (cfg("generation", "output_dir") or "output")
+OUTPUT_DIR = Path(__file__).parent.parent.parent / (cfg("generation", "output_dir") or "output")
 
 
 def _validate_url(url: str) -> str:
@@ -702,7 +702,7 @@ def answers_delete(answer_id: int):
 @answers.command("import")
 def answers_import():
     """Import answers from screening_answers.json into the cache."""
-    screening_path = Path(__file__).parent.parent / "data" / "screening_answers.json"
+    screening_path = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
     count = import_screening_answers(screening_path)
     click.echo(f"Imported {count} new answers from {screening_path.name}.")
 

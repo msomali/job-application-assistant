@@ -33,7 +33,7 @@ BETA_HEADER = "computer-use-2025-01-24"
 TOOL_VERSION = "20250124"
 MODEL = "claude-sonnet-4-20250514"
 
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
+OUTPUT_DIR = Path(__file__).parent.parent.parent.parent / "output"
 SCREENSHOTS_DIR = OUTPUT_DIR / "screenshots"
 
 # Pause signal mechanism — set by Telegram bot or CLI
@@ -395,7 +395,7 @@ async def _computer_use_loop(
     initial_screenshot = await _take_screenshot(page)
 
     # Load screening answers knowledge base
-    qa_path = Path(__file__).parent.parent.parent / "data" / "screening_answers.json"
+    qa_path = Path(__file__).parent.parent.parent.parent / "data" / "screening_answers.json"
     screening_answers = {}
     if qa_path.exists():
         screening_answers = json.loads(qa_path.read_text())

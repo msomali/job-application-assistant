@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SESSION_DIR = Path(__file__).parent.parent.parent / "data" / "browser_sessions"
+SESSION_DIR = Path(__file__).parent.parent.parent.parent / "data" / "browser_sessions"
 
 
 def session_path(name: str = "default") -> Path:
