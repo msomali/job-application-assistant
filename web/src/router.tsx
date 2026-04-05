@@ -2,14 +2,23 @@ import { createBrowserRouter, Navigate, redirect } from "react-router";
 import { AppShell } from "@/components/layout/app-shell";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { useAuthStore } from "@/stores/auth-store";
+import { silentRestore } from "@/hooks/use-auth";
 import LoginPage from "@/pages/auth/login";
 import RegisterPage from "@/pages/auth/register";
 import ForgotPasswordPage from "@/pages/auth/forgot-password";
 
-function requireAuth() {
+let restoreAttempted = false;
+
+async function requireAuth() {
+  // On first load, attempt silent restore from refresh cookie
+  if (!restoreAttempted) {
+    restoreAttempted = true;
+    await silentRestore();
+  }
   if (!useAuthStore.getState().isAuthenticated) return redirect("/login");
   return null;
 }
+
 function requireGuest() {
   if (useAuthStore.getState().isAuthenticated) return redirect("/dashboard");
   return null;
