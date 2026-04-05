@@ -13,6 +13,7 @@ dependencies = [
     "sse-starlette>=2.0",
     "python-multipart>=0.0.18",
     "pydantic-settings>=2.7",
+    "python-telegram-bot>=21.0",
 ]
 
 [project.optional-dependencies]
