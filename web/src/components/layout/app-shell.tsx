@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router";
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { IconRail } from "./icon-rail";
 import { TopBar } from "./top-bar";
+import { TaskDrawer } from "./task-drawer";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -34,6 +35,7 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+      <TaskDrawer />
     </div>
   );
 }

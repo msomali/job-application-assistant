@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "react-router";
 import { cn } from "@/lib/utils";
+import { TaskBadge } from "./task-badge";
 import {
   Tooltip,
   TooltipContent,
@@ -42,6 +43,7 @@ export function IconRail() {
           <NavItem key={item.to} {...item} />
         ))}
         <div className="mt-auto" />
+        <TaskBadge />
         {bottomItems.map((item) => (
           <NavItem key={item.to} {...item} />
         ))}

@@ -8,7 +8,7 @@ import { queryKeys } from "@/lib/query-keys";
 export function useTaskStream() {
   const token = useAuthStore((s) => s.token);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { addTask, updateTask, removeTask } = useTaskStore();
+  const { addTask, updateTask, completeTask, failTask } = useTaskStore();
   const queryClient = useQueryClient();
   const retriesRef = useRef(0);
   const esRef = useRef<EventSource | null>(null);
@@ -34,7 +34,7 @@ export function useTaskStream() {
 
       es.addEventListener("task:completed", (e) => {
         const data = JSON.parse(e.data);
-        removeTask(data.task_id);
+        completeTask(data.task_id, data.result);
         toast.success(`${data.type} completed`);
         if (data.type === "scrape" || data.type === "discover") {
           queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
@@ -54,7 +54,7 @@ export function useTaskStream() {
 
       es.addEventListener("task:failed", (e) => {
         const data = JSON.parse(e.data);
-        removeTask(data.task_id);
+        failTask(data.task_id, data.error);
         toast.error(`${data.type} failed: ${data.error || "Unknown error"}`);
       });
 
@@ -77,5 +77,5 @@ export function useTaskStream() {
       esRef.current?.close();
       esRef.current = null;
     };
-  }, [isAuthenticated, token, addTask, updateTask, removeTask, queryClient]);
+  }, [isAuthenticated, token, addTask, updateTask, completeTask, failTask, queryClient]);
 }
