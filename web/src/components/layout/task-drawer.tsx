@@ -70,7 +70,7 @@ function CompletedTaskRow({ task }: { task: CompletedTask }) {
       onClick={handleClick}
       className={cn(
         "flex w-full items-center gap-3 rounded-md border p-3 text-left transition-colors",
-        task.result?.job_id && "cursor-pointer hover:bg-accent",
+        !!task.result?.job_id && "cursor-pointer hover:bg-accent",
       )}
     >
       <Icon className={cn("h-5 w-5 shrink-0", iconColor)} />
