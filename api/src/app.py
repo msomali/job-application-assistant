@@ -9,7 +9,7 @@ from src.auth.backend import auth_backend, fastapi_users
 from src.auth.manager import UserManager
 from src.config import settings
 from src.middleware.tenant import TenantMiddleware
-from src.schemas import UserCreate, UserRead
+from src.schemas import UserCreate, UserRead, UserUpdate
 
 
 @asynccontextmanager
@@ -52,6 +52,11 @@ def create_app() -> FastAPI:
         fastapi_users.get_verify_router(UserRead),
         prefix="/api/auth",
         tags=["auth"],
+    )
+    app.include_router(
+        fastapi_users.get_users_router(UserRead, UserUpdate),
+        prefix="/api/users",
+        tags=["users"],
     )
 
     # API routes

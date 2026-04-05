@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import Request
 from fastapi_users import BaseUserManager, UUIDIDMixin
+from sqlalchemy import text
 
 from src.db.models import Tenant, User, UserProfile
 
@@ -27,6 +28,11 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             user.tenant_id = tenant.id
             user.role = "owner"
             session.add(user)
+
+        # Set RLS context so the INSERT into user_profiles passes the policy check
+        await session.execute(
+            text(f"SET app.current_tenant = '{user.tenant_id}'")
+        )
 
         # Create empty profile
         profile = UserProfile(

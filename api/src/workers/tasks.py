@@ -51,7 +51,14 @@ async def _update_task(task_id: str, tenant_id: str, **fields):
 
 
 def _run_async(coro):
-    """Run async code from sync Celery task."""
+    """Run async code from sync Celery task.
+
+    Each call gets a fresh event loop and engine to avoid cross-loop issues
+    with asyncpg connections.
+    """
+    from src.db import pg
+    pg._engine = None
+    pg._session_factory = None
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)

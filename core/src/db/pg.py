@@ -52,6 +52,8 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 async def set_tenant_context(session: AsyncSession, tenant_id: str) -> None:
     """Set the RLS tenant context for the current database session."""
+    if not tenant_id or tenant_id == "None":
+        raise ValueError("tenant_id is required for RLS context")
     await session.execute(text(f"SET app.current_tenant = '{tenant_id}'"))
 
 
