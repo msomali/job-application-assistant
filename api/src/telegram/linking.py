@@ -3,7 +3,7 @@
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ async def generate_link_code(session: AsyncSession, user_id: str) -> dict:
     )
 
     code = secrets.token_urlsafe(LINK_CODE_LENGTH)[:LINK_CODE_LENGTH]
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=LINK_CODE_TTL_MINUTES)
+    expires_at = datetime.now(UTC) + timedelta(minutes=LINK_CODE_TTL_MINUTES)
 
     link_code = TelegramLinkCode(
         user_id=uuid.UUID(user_id),
@@ -69,7 +69,7 @@ async def verify_link_code(
     if not link_code:
         return False, "Invalid or expired code. Please try again from Settings."
 
-    if link_code.expires_at < datetime.now(timezone.utc):
+    if link_code.expires_at < datetime.now(UTC):
         await session.delete(link_code)
         await session.commit()
         return False, "Code expired. Please generate a new one from Settings."

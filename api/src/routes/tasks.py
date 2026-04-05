@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 @router.get("/stream")
 async def task_stream(
     token: str = Query(...),
-    user_manager: "UserManager" = Depends(get_user_manager),
+    user_manager=Depends(get_user_manager),
 ):
     """SSE endpoint — streams task events for the current tenant.
 

@@ -2,11 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install core first (dependency)
+# Install core first (dependency), then api
 COPY core/ ./core/
 RUN pip install --no-cache-dir ./core
 
-# Install api
 COPY api/ ./api/
 RUN pip install --no-cache-dir ./api
 

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.auth.backend import auth_backend, refresh_backend, fastapi_users
+from src.auth.backend import auth_backend, fastapi_users, refresh_backend
 from src.auth.manager import UserManager
 from src.config import settings
 from src.middleware.tenant import TenantMiddleware

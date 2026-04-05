@@ -3,9 +3,8 @@
 import logging
 
 import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 from src.config import settings
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 

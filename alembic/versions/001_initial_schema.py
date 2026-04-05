@@ -39,11 +39,12 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("tenant_id", UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=False),
+        sa.Column("tenant_id", UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=True),
         sa.Column("email", sa.Text, unique=True, nullable=False),
         sa.Column("hashed_password", sa.Text, nullable=True),
         sa.Column("role", sa.Text, server_default="member"),
         sa.Column("is_active", sa.Boolean, server_default=sa.text("true")),
+        sa.Column("is_superuser", sa.Boolean, server_default=sa.text("false")),
         sa.Column("is_verified", sa.Boolean, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
