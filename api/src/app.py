@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.auth.backend import auth_backend, fastapi_users
+from src.auth.backend import auth_backend, refresh_backend, fastapi_users
 from src.auth.manager import UserManager
 from src.config import settings
 from src.middleware.tenant import TenantMiddleware
@@ -53,6 +53,18 @@ def create_app() -> FastAPI:
         prefix="/api/auth",
         tags=["auth"],
     )
+
+    # Refresh token login (sets httpOnly cookie)
+    app.include_router(
+        fastapi_users.get_auth_router(refresh_backend),
+        prefix="/api/auth/cookie",
+        tags=["auth"],
+    )
+
+    # Refresh endpoint
+    from src.auth.refresh import router as refresh_router
+    app.include_router(refresh_router)
+
     app.include_router(
         fastapi_users.get_users_router(UserRead, UserUpdate),
         prefix="/api/users",
