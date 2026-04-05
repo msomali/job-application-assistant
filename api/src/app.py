@@ -112,6 +112,9 @@ def create_app() -> FastAPI:
     from src.telegram.webhook import router as telegram_router
     app.include_router(telegram_router)
 
+    from src.routes.notifications import router as notifications_router
+    app.include_router(notifications_router)
+
     @app.get("/healthz")
     async def healthz():
         return {"status": "ok"}

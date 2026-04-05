@@ -66,8 +66,18 @@ def _run_async(coro):
         loop.close()
 
 
+def _notify_async(tenant_id: str, user_id: str | None, event_type: str, data: dict):
+    """Fire-and-forget notification dispatch."""
+    if user_id:
+        try:
+            from src.notifications.dispatcher import notify
+            _run_async(notify(tenant_id, user_id, event_type, data))
+        except Exception:
+            logger.exception("Notification dispatch failed")
+
+
 @celery_app.task(bind=True, name="scrape_job")
-def scrape_job(self, task_id: str, tenant_id: str, url: str):
+def scrape_job(self, task_id: str, tenant_id: str, url: str, user_id: str | None = None):
     """Scrape a job URL, extract details, save to DB."""
     _run_async(_update_task(task_id, tenant_id, status="running", progress=10))
     _publish_event(tenant_id, "task:started", {"task_id": task_id, "type": "scrape"})
@@ -120,6 +130,9 @@ def scrape_job(self, task_id: str, tenant_id: str, url: str):
         _publish_event(tenant_id, "task:completed", {
             "task_id": task_id, "type": "scrape", "result": {"job_id": job_id},
         })
+        _notify_async(tenant_id, user_id, "task:completed", {
+            "task_id": task_id, "type": "scrape", "result": {"job_id": job_id},
+        })
 
     except Exception as e:
         logger.exception("scrape_job failed: %s", e)
@@ -127,11 +140,14 @@ def scrape_job(self, task_id: str, tenant_id: str, url: str):
         _publish_event(tenant_id, "task:failed", {
             "task_id": task_id, "type": "scrape", "error": str(e),
         })
+        _notify_async(tenant_id, user_id, "task:failed", {
+            "task_id": task_id, "type": "scrape", "error": str(e),
+        })
         raise
 
 
 @celery_app.task(bind=True, name="analyze_job")
-def analyze_job(self, task_id: str, tenant_id: str, job_id: int):
+def analyze_job(self, task_id: str, tenant_id: str, job_id: int, user_id: str | None = None):
     """Analyze a job against the user's profile."""
     _run_async(_update_task(task_id, tenant_id, status="running", progress=10))
     _publish_event(tenant_id, "task:started", {"task_id": task_id, "type": "analyze"})
@@ -232,6 +248,10 @@ def analyze_job(self, task_id: str, tenant_id: str, job_id: int):
             "task_id": task_id, "type": "analyze",
             "result": {"analysis_id": analysis_id, "fit_score": analysis_result.fit_score},
         })
+        _notify_async(tenant_id, user_id, "task:completed", {
+            "task_id": task_id, "type": "analyze",
+            "result": {"analysis_id": analysis_id, "fit_score": analysis_result.fit_score},
+        })
 
     except Exception as e:
         logger.exception("analyze_job failed: %s", e)
@@ -239,11 +259,14 @@ def analyze_job(self, task_id: str, tenant_id: str, job_id: int):
         _publish_event(tenant_id, "task:failed", {
             "task_id": task_id, "type": "analyze", "error": str(e),
         })
+        _notify_async(tenant_id, user_id, "task:failed", {
+            "task_id": task_id, "type": "analyze", "error": str(e),
+        })
         raise
 
 
 @celery_app.task(bind=True, name="generate_docs")
-def generate_docs(self, task_id: str, tenant_id: str, job_id: int):
+def generate_docs(self, task_id: str, tenant_id: str, job_id: int, user_id: str | None = None):
     """Generate resume + cover letter for a job."""
     _run_async(_update_task(task_id, tenant_id, status="running", progress=10))
     _publish_event(tenant_id, "task:started", {"task_id": task_id, "type": "generate"})
@@ -256,17 +279,23 @@ def generate_docs(self, task_id: str, tenant_id: str, job_id: int):
         _publish_event(tenant_id, "task:completed", {
             "task_id": task_id, "type": "generate", "result": {"status": "placeholder"},
         })
+        _notify_async(tenant_id, user_id, "task:completed", {
+            "task_id": task_id, "type": "generate", "result": {"status": "placeholder"},
+        })
     except Exception as e:
         logger.exception("generate_docs failed: %s", e)
         _run_async(_update_task(task_id, tenant_id, status="failed", error=str(e)))
         _publish_event(tenant_id, "task:failed", {
             "task_id": task_id, "type": "generate", "error": str(e),
         })
+        _notify_async(tenant_id, user_id, "task:failed", {
+            "task_id": task_id, "type": "generate", "error": str(e),
+        })
         raise
 
 
 @celery_app.task(bind=True, name="run_discovery")
-def run_discovery(self, task_id: str, tenant_id: str):
+def run_discovery(self, task_id: str, tenant_id: str, user_id: str | None = None):
     """Run all active search configs for a tenant."""
     _run_async(_update_task(task_id, tenant_id, status="running", progress=10))
     _publish_event(tenant_id, "task:started", {"task_id": task_id, "type": "discover"})
@@ -279,10 +308,16 @@ def run_discovery(self, task_id: str, tenant_id: str):
         _publish_event(tenant_id, "task:completed", {
             "task_id": task_id, "type": "discover", "result": {"status": "placeholder"},
         })
+        _notify_async(tenant_id, user_id, "task:completed", {
+            "task_id": task_id, "type": "discover", "result": {"status": "placeholder"},
+        })
     except Exception as e:
         logger.exception("run_discovery failed: %s", e)
         _run_async(_update_task(task_id, tenant_id, status="failed", error=str(e)))
         _publish_event(tenant_id, "task:failed", {
+            "task_id": task_id, "type": "discover", "error": str(e),
+        })
+        _notify_async(tenant_id, user_id, "task:failed", {
             "task_id": task_id, "type": "discover", "error": str(e),
         })
         raise

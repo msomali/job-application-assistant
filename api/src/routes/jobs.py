@@ -105,7 +105,7 @@ async def scrape_job(
     await session.refresh(task)
 
     from src.workers.tasks import scrape_job as scrape_task
-    scrape_task.delay(str(task.id), str(user.tenant_id), str(request.url))
+    scrape_task.delay(str(task.id), str(user.tenant_id), str(request.url), user_id=str(user.id))
 
     return task
 
@@ -149,7 +149,7 @@ async def analyze_job(
     await session.refresh(task)
 
     from src.workers.tasks import analyze_job as analyze_task
-    analyze_task.delay(str(task.id), str(user.tenant_id), job_id)
+    analyze_task.delay(str(task.id), str(user.tenant_id), job_id, user_id=str(user.id))
 
     return task
 
@@ -176,7 +176,7 @@ async def generate_docs(
     await session.refresh(task)
 
     from src.workers.tasks import generate_docs as generate_task
-    generate_task.delay(str(task.id), str(user.tenant_id), job_id)
+    generate_task.delay(str(task.id), str(user.tenant_id), job_id, user_id=str(user.id))
 
     return task
 

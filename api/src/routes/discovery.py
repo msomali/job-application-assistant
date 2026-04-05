@@ -96,6 +96,6 @@ async def run_discovery(
     await session.refresh(task)
 
     from src.workers.tasks import run_discovery as discovery_task
-    discovery_task.delay(str(task.id), str(user.tenant_id))
+    discovery_task.delay(str(task.id), str(user.tenant_id), user_id=str(user.id))
 
     return task
