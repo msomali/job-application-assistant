@@ -44,4 +44,10 @@ export const queryKeys = {
   admin: {
     users: ["admin", "users"] as const,
   },
+  telegram: {
+    status: ["telegram", "status"] as const,
+  },
+  notifications: {
+    preferences: ["notifications", "preferences"] as const,
+  },
 };

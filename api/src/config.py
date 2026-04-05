@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     minio_root_user: str = "minioadmin"
     minio_root_password: str = "minioadmin"
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_webhook_base_url: str = ""
+
+    # Cookie security (False for local HTTP dev)
+    cookie_secure: bool = False
+
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}
 
 

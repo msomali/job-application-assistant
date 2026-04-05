@@ -219,3 +219,29 @@ class SkillCount(BaseModel):
 class SkillGap(BaseModel):
     skill: str
     demand_count: int
+
+
+# --- Telegram schemas ---
+
+class TelegramLinkCodeResponse(BaseModel):
+    code: str
+    deep_link: str
+
+
+class TelegramStatusResponse(BaseModel):
+    linked: bool
+    username: str | None = None
+    chat_id: int | None = None
+    is_active: bool = False
+
+
+# --- Notification schemas ---
+
+class NotificationPreferencesRead(BaseModel):
+    telegram_enabled: bool = True
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    telegram_enabled: bool
