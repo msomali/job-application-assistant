@@ -1,5 +1,6 @@
 """FastAPI application factory."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,12 +12,29 @@ from src.config import settings
 from src.middleware.tenant import TenantMiddleware
 from src.schemas import UserCreate, UserRead, UserUpdate
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Set secrets from settings
     UserManager.reset_password_token_secret = settings.jwt_secret
     UserManager.verification_token_secret = settings.jwt_secret
+
+    # Register Telegram webhook if configured
+    if settings.telegram_bot_token and settings.telegram_webhook_base_url:
+        try:
+            from src.telegram.sender import get_bot
+            bot = get_bot()
+            if bot:
+                webhook_url = f"{settings.telegram_webhook_base_url}/api/telegram/webhook/{settings.telegram_bot_token}"
+                await bot.set_webhook(url=webhook_url)
+                logger.info("Telegram webhook registered: %s", webhook_url[:50] + "...")
+        except Exception:
+            logger.exception("Failed to register Telegram webhook")
+    else:
+        logger.info("Telegram bot disabled — TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_BASE_URL not set")
+
     yield
 
 
@@ -90,6 +108,9 @@ def create_app() -> FastAPI:
     app.include_router(billing_router)
     app.include_router(admin_router)
     app.include_router(tasks_router)
+
+    from src.telegram.webhook import router as telegram_router
+    app.include_router(telegram_router)
 
     @app.get("/healthz")
     async def healthz():
