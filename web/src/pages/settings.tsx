@@ -43,8 +43,115 @@ export function Component() {
         </CardContent>
       </Card>
 
+      <TelegramSection />
+      <NotificationSection />
       {isAdmin && <TeamSection />}
     </div>
+  );
+}
+
+function TelegramSection() {
+  const queryClient = useQueryClient();
+
+  const statusQuery = useQuery({
+    queryKey: queryKeys.telegram.status,
+    queryFn: () => apiClient.get("/api/telegram/status").then((r) => r.data),
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: () => apiClient.post("/api/telegram/link-code").then((r) => r.data),
+    onError: (err: any) => toast.error(err.response?.data?.detail || "Failed to generate link"),
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: () => apiClient.delete("/api/telegram/unlink"),
+    onSuccess: () => {
+      toast.success("Telegram unlinked");
+      queryClient.invalidateQueries({ queryKey: queryKeys.telegram.status });
+    },
+    onError: () => toast.error("Failed to unlink"),
+  });
+
+  const status = statusQuery.data;
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Telegram</CardTitle></CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {status?.linked ? (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Connected as</span>
+              <span>@{status.username || "unknown"}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => unlinkMutation.mutate()}
+              disabled={unlinkMutation.isPending}
+            >
+              Disconnect
+            </Button>
+          </>
+        ) : (
+          <>
+            <p className="text-muted-foreground">Connect your Telegram account to receive notifications and run commands from the bot.</p>
+            {linkMutation.data?.deep_link ? (
+              <div className="space-y-2">
+                <a
+                  href={linkMutation.data.deep_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+                >
+                  Open in Telegram
+                </a>
+                <p className="text-xs text-muted-foreground">Code: {linkMutation.data.code} (expires in 10 min)</p>
+              </div>
+            ) : (
+              <Button size="sm" onClick={() => linkMutation.mutate()} disabled={linkMutation.isPending}>
+                Connect Telegram
+              </Button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function NotificationSection() {
+  const queryClient = useQueryClient();
+
+  const prefsQuery = useQuery({
+    queryKey: queryKeys.notifications.preferences,
+    queryFn: () => apiClient.get("/api/notifications/preferences").then((r) => r.data),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (telegram_enabled: boolean) =>
+      apiClient.put("/api/notifications/preferences", { telegram_enabled }).then((r) => r.data),
+    onSuccess: () => {
+      toast.success("Preferences saved");
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications.preferences });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Notifications</CardTitle></CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between text-sm">
+          <span>Telegram notifications</span>
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={prefsQuery.data?.telegram_enabled ?? true}
+            onChange={(e) => updateMutation.mutate(e.target.checked)}
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
