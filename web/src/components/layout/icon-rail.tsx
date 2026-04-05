@@ -32,7 +32,7 @@ const bottomItems = [{ to: "/settings", icon: Settings, label: "Settings" }];
 export function IconRail() {
   return (
     <TooltipProvider delay={0}>
-      <nav className="group/rail flex w-[52px] flex-col items-center gap-1 border-r bg-muted/40 px-2 py-3 transition-all duration-200 hover:w-[200px]">
+      <nav className="group/rail hidden md:flex w-[52px] flex-col items-center gap-1 border-r bg-muted/40 px-2 py-3 transition-all duration-200 hover:w-[200px]">
         <NavLink
           to="/dashboard"
           className="mb-3 flex h-8 w-8 items-center justify-center rounded-md text-lg font-bold text-primary"

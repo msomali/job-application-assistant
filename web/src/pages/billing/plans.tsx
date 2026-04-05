@@ -27,7 +27,7 @@ const plans = [
 export function Component() {
   return (
     <div className="max-w-3xl">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {plans.map((plan) => (
           <Card key={plan.name} className={plan.current ? "border-primary" : ""}>
             <CardHeader>

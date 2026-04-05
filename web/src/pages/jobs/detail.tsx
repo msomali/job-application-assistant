@@ -57,7 +57,7 @@ export function Component() {
               <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Jobs
             </Button>
 
-            <div className="flex gap-5">
+            <div className="flex flex-col gap-5 md:flex-row">
               <div className="min-w-0 flex-1 space-y-4">
                 <div className="flex items-start justify-between">
                   <div>
@@ -196,7 +196,7 @@ export function Component() {
                 </Tabs>
               </div>
 
-              <div className="w-64 shrink-0 space-y-3">
+              <div className="w-full md:w-64 shrink-0 space-y-3">
                 <h3 className="text-sm font-semibold">Actions</h3>
                 <Button
                   className="w-full"

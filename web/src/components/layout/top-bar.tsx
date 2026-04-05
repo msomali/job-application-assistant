@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TaskIndicator } from "@/components/tasks/task-indicator";
+import { TaskBadge } from "./task-badge";
 import { ThemeToggle } from "./theme-toggle";
 import { useAuthStore } from "@/stores/auth-store";
 import { useLogout } from "@/hooks/use-auth";
@@ -26,6 +27,9 @@ export function TopBar({ title }: TopBarProps) {
       <h1 className="text-[15px] font-semibold">{title}</h1>
       <div className="flex items-center gap-3">
         <TaskIndicator />
+        <div className="flex md:hidden">
+          <TaskBadge />
+        </div>
         <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">Free plan</span>
         <ThemeToggle />
         <DropdownMenu>

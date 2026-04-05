@@ -134,7 +134,7 @@ export function Component() {
         empty={<p className="text-sm text-muted-foreground">No search configs yet. Create one to start discovering jobs.</p>}
       >
         {(data: any[]) => (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {data.map((config: any) => (
               <Card key={config.id}>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">

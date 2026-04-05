@@ -3,6 +3,7 @@ import { useTaskStream } from "@/hooks/use-task-stream";
 import { IconRail } from "./icon-rail";
 import { TopBar } from "./top-bar";
 import { TaskDrawer } from "./task-drawer";
+import { MobileNav } from "./mobile-nav";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -31,11 +32,12 @@ export function AppShell() {
       <IconRail />
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title={title} />
-        <main className="flex-1 overflow-auto p-5">
+        <main className="flex-1 overflow-auto p-4 pb-20 md:p-5 md:pb-5">
           <Outlet />
         </main>
       </div>
       <TaskDrawer />
+      <MobileNav />
     </div>
   );
 }

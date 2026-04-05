@@ -88,7 +88,7 @@ export function Component() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card>
           <CardContent className="pt-4">
             <div className="text-[11px] font-medium uppercase text-muted-foreground">Total Jobs</div>
